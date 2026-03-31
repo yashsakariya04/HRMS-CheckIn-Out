@@ -1,93 +1,246 @@
-# HRMS_backend
+# HRMS CheckIn Out
 
+A backend system for an HR Management application that handles employee attendance, task reporting, leave management, and admin oversight. The frontend for this project already exists as a React and TypeScript application. This repository documents and will contain the Python FastAPI backend that powers it.
 
+---
 
-## Getting started
+## What This Project Does
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+The system allows employees to check in and check out of work each day, log the tasks they completed against specific projects, and submit requests for leave, work from home days, missing time corrections, and compensatory off. Administrators can view attendance and task reports for any employee, download monthly reports as CSV files, review leave balances across the team, and approve or reject all employee requests.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+---
 
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## Project Structure
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/ai_team1450214/HRMS_backend.git
-git branch -M main
-git push -uf origin main
+HRMS/backend/
+        app/
+            main.py
+            config.py
+            database.py
+            models/
+            schemas/
+            routers/
+            services/
+            jobs/
+        alembic/
+            env.py
+            versions/
+        tests/
+        .env.example
+        requirements.txt
+        Dockerfile
+        docker-compose.yml
 ```
 
-## Integrate with your tools
+---
 
-* [Set up project integrations](https://gitlab.com/ai_team1450214/HRMS_backend/-/settings/integrations)
+## Tech Stack
 
-## Collaborate with your team
+**Language:** Python 3.11
+**Framework:** FastAPI
+**Database:** PostgreSQL 16
+**ORM:** SQLAlchemy 2.x with async support
+**Migrations:** Alembic
+**Authentication:** JWT tokens using RS256 signing
+**Password Hashing:** Argon2id via passlib
+**Cache and Rate Limiting:** Redis
+**Job Scheduler:** APScheduler
+**Containerization:** Docker and Docker Compose
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+---
 
-## Test and Deploy
+## Prerequisites
 
-Use the built-in continuous integration in GitLab.
+Before running this project you need the following installed on your machine.
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+Docker and Docker Compose
+Python 3.11 or later
+OpenSSL (for generating JWT signing keys)
 
-***
+---
 
-# Editing this README
+## Getting Started
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+**Step 1. Clone the repository**
 
-## Suggestions for a good README
+```bash
+git clone https://github.com/your-org/HRMS-CheckIn-Out.git
+cd HRMS-CheckIn-Out/backend
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+**Step 2. Generate RSA keys for JWT signing**
 
-## Name
-Choose a self-explaining name for your project.
+```bash
+mkdir keys
+openssl genrsa -out keys/private.pem 2048
+openssl rsa -in keys/private.pem -pubout -out keys/public.pem
+```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+**Step 3. Set up environment variables**
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+```bash
+cp .env.example .env
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+Open the `.env` file and fill in the values as described in the Environment Variables section below.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+**Step 4. Start the database and Redis**
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+```bash
+docker compose up -d db redis
+```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+**Step 5. Create a virtual environment and install dependencies**
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+**Step 6. Run database migrations**
+
+```bash
+alembic upgrade head
+```
+
+This creates all twelve tables and inserts the default seed data including the organization record, project list, holiday calendar, and demo employee accounts.
+
+**Step 7. Start the API server**
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+The API will be available at `http://localhost:8000` and the auto generated documentation will be at `http://localhost:8000/docs`.
+
+---
+
+## Environment Variables
+
+Below is a description of every variable in the `.env` file.
+
+```
+DATABASE_URL         Full PostgreSQL connection string for async SQLAlchemy
+REDIS_URL            Redis connection string
+JWT_PRIVATE_KEY_PATH Path to the private.pem file used to sign tokens
+JWT_PUBLIC_KEY_PATH  Path to the public.pem file used to verify tokens
+JWT_ALGORITHM        Signing algorithm, should be RS256
+ACCESS_TOKEN_EXPIRE_MINUTES   How long the access token stays valid, default 15
+REFRESH_TOKEN_EXPIRE_DAYS     How long the refresh token stays valid, default 7
+CORS_ORIGINS         Comma separated list of allowed frontend origins
+```
+
+---
+
+## Database
+
+The database has twelve tables. Here is a brief description of each one.
+
+**organizations** holds the company record and sits at the top of the data hierarchy. All other records belong to an organization.
+
+**departments** groups employees into teams such as Engineering or Design.
+
+**employees** is a single table for all users including administrators. The role column determines what each user can do. A value of employee gives standard access. A value of admin gives approval and reporting access. Administrators are not a separate entity.
+
+**refresh_tokens** stores secure hashes of the long lived refresh tokens issued at login. This allows tokens to be revoked immediately when a user logs out.
+
+**projects** holds the list of active projects that employees can tag their daily tasks against. This replaces what was previously a hardcoded list in the frontend.
+
+**attendance_sessions** is the core table. One record is created each time an employee checks in. The check out time is filled in when they leave. The total hours worked is computed automatically by the database. Only one session is allowed per employee per day.
+
+**task_entries** stores the individual tasks logged by an employee within a session. Each task is associated with a project and has a description and hours logged.
+
+**leave_policies** stores the rules for how leave is accrued, including how many days are earned per month and how many unused days can be carried forward.
+
+**employee_leave_balances** is the leave ledger. One row per employee per leave type per month tracks opening balance, accrual, usage, adjustments, and the closing balance.
+
+**leave_wfh_requests** holds all four types of requests: leave, work from home, missing time correction, and compensatory off. Each request has a status that moves from pending to approved or rejected.
+
+**holidays** stores company and national holidays. This replaces a hardcoded list that previously lived in the frontend code.
+
+**audit_logs** records every sensitive admin action permanently. Records here are never updated or deleted.
+
+---
+
+## API Overview
+
+All endpoints are served under the `/api/v1/` prefix. The API follows standard REST conventions and returns JSON for all responses.
+
+**Auth:** Login, logout, token refresh, and current user profile.
+
+**Employees:** Create, read, update, and deactivate employee accounts. Admin only except for reading your own profile.
+
+**Attendance:** Check in, check out, fetch today's session, retrieve monthly records, and calculate average hours for the current month.
+
+**Tasks:** Add, update, and remove task entries within an active session.
+
+**Requests:** Submit and cancel requests as an employee. Approve or reject requests as an administrator.
+
+**Balances:** View leave balances for yourself or any employee. View a summary across all employees.
+
+**Projects and Holidays:** Read access for all authenticated users. Write access for administrators only.
+
+**Reporting:** Monthly attendance data in JSON or CSV format. Leave summary for all employees.
+
+Full interactive documentation is available at `http://localhost:8000/docs` when the server is running.
+
+---
+
+## Background Jobs
+
+The backend runs four scheduled jobs automatically.
+
+The first job runs at midnight on the first of every month and creates leave balance records for the new month for every active employee, applying the carry forward from the previous month and adding the new accrual.
+
+The second job runs at the end of each day and flags any attendance session from that day where the employee checked in but never checked out.
+
+The third job runs each night and removes expired and revoked refresh tokens from the database.
+
+The fourth job runs on the last day of each month and generates a CSV summary of attendance and leave which is sent to the administrator.
+
+---
+
+## Running Tests
+
+```bash
+pytest tests/
+```
+
+Tests cover authentication, attendance check in and check out logic, leave request approval and side effects, and reporting accuracy.
+
+---
+
+## Migrations
+
+To create a new migration after changing a model run the following command.
+
+```bash
+alembic revision --autogenerate -m "describe your change here"
+alembic upgrade head
+```
+
+To roll back the most recent migration run this.
+
+```bash
+alembic downgrade -1
+```
+
+---
+
+## Security Notes
+
+Passwords are hashed using Argon2id and are never stored or logged in plain text. Access tokens expire in fifteen minutes. Refresh tokens expire in seven days and are stored as SHA256 hashes so the raw token is never persisted in the database. Login attempts are rate limited via Redis to protect against brute force attacks. All admin actions are recorded in the audit log.
+
+---
 
 ## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+Please create a feature branch from main for any new work. Keep commits focused and descriptive. Run the test suite before raising a pull request. Do not commit the contents of the keys folder or the .env file.
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+---
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Internal use only.
