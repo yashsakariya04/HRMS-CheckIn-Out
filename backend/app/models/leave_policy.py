@@ -10,11 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models import Base
 
-class Holiday(Base):
-    __tablename__ = "holiday"
+class LeavePolicy(Base):
+    __tablename__ = "leave_policy"
 
     __table_args__ = (
-        UniqueConstraint("organization_id", "holiday_date"),
+        UniqueConstraint("organization_id", "leave_type"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -27,14 +27,18 @@ class Holiday(Base):
         nullable=False
     )
 
-    holiday_date: Mapped[date] = mapped_column(Date, nullable=False)
-
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-
-    holiday_type: Mapped[str] = mapped_column(
-        String(30), server_default="national", nullable=False
+    leave_type: Mapped[str] = mapped_column(
+        String(30), nullable=False
     )
 
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    days_per_month: Mapped[float] = mapped_column(
+        Numeric(5, 2), server_default="1", nullable=False
+    )
+
+    max_carry_fwd: Mapped[float] = mapped_column(
+        Numeric(5, 2), server_default="1", nullable=False
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), nullable=False
     )
