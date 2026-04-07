@@ -1,0 +1,37 @@
+# requirements.txt
+
+# Web Framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# Database
+sqlalchemy==2.0.30
+psycopg2-binary==2.9.9
+alembic==1.13.1
+asyncpg
+
+
+# Data Validation
+pydantic[email]==2.7.1
+pydantic-settings==2.2.1
+
+# Authentication
+python-jose[cryptography]==3.3.0
+google-auth==2.29.0              # verifies Google id_token directly
+google-auth-httplib2==0.2.0
+requests==2.31.0
+
+# Request Handling
+python-multipart==0.0.9
+python-dotenv==1.0.1
+
+# Background Jobs
+apscheduler==3.10.4
+
+# Testing
+pytest==8.2.0
+httpx==0.27.0
+
+passlib[argon2]
+argon2-cffi
+cryptography
