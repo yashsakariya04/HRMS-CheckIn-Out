@@ -6,6 +6,7 @@
 # Web Framework & Server
 fastapi
 uvicorn[standard]
+requests 
 
 # Database & ORM
 sqlalchemy[asyncio]
@@ -23,3 +24,4 @@ python-jose[cryptography]
 passlib[argon2]
 argon2-cffi
 cryptography
+google-auth

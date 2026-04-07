@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, date
 from sqlalchemy import String, ForeignKey, Boolean, Date, TIMESTAMP, CheckConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
-from app.models import Base
+from backend.app.models import Base
 
 
 class Employee(Base):

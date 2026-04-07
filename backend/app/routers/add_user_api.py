@@ -1,11 +1,10 @@
-# routers/employee.py
-
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.schemas.add_user import CreateEmployeeRequest, UpdateProfileRequest
-from app.services.add_user_service import create_employee,update_profile
-from app.dependencies.database import get_db
-from app.dependencies.auth import require_admin, get_current_user
+from uuid import UUID
+from backend.app.schemas.add_user import CreateEmployeeRequest, UpdateProfileRequest
+from backend.app.services.add_user_service import create_employee, update_profile, delete_employee
+from backend.app.dependencies.database import get_db
+from backend.app.dependencies.auth import require_admin, get_current_user
 
 router = APIRouter(prefix="/employee", tags=["Employee"])
 
@@ -24,3 +23,12 @@ async def update_profile_route(
     db: AsyncSession = Depends(get_db)
 ):
     return await update_profile(user, data, db)
+
+
+@router.delete("/{employee_id}")
+async def remove_employee(
+    employee_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
+):
+    return await delete_employee(employee_id, db)

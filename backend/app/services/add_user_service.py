@@ -1,9 +1,10 @@
 # services/employee_service.py
 from sqlalchemy import select
 from fastapi import HTTPException
-from app.models.employee import Employee
+from backend.app.models.employee import Employee
 import uuid
-from app.models.organization import Organization
+from backend.app.models.organization import Organization
+from uuid import UUID
 
 async def create_employee(data, db):
 
@@ -48,3 +49,19 @@ async def update_profile(user, data, db):
     await db.commit()
 
     return {"message": "Profile updated"}
+
+
+async def delete_employee(employee_id: UUID, db):
+    result = await db.execute(select(Employee).where(Employee.id == employee_id))
+    employee = result.scalars().first()
+
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    if not employee.is_active:
+        raise HTTPException(status_code=400, detail="Employee already deactivated")
+
+    employee.is_active = False
+    await db.commit()
+
+    return {"message": "Employee deactivated successfully"}

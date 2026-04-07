@@ -5,7 +5,7 @@ from sqlalchemy import String, ForeignKey, TIMESTAMP, text, Boolean, UniqueConst
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models import Base
+from backend.app.models import Base
 
 
 class Project(Base):

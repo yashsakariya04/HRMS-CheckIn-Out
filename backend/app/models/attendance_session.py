@@ -8,7 +8,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models import Base
+from backend.app.models import Base
 
 
 class AttendanceSession(Base):
@@ -72,3 +72,5 @@ class AttendanceSession(Base):
     nullable=False
 
     )
+    
+    

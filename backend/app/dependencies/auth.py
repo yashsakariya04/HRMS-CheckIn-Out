@@ -3,13 +3,12 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import decode_token
-from app.models.employee import Employee
-from app.dependencies.database import get_db
+from backend.app.core.security import decode_token
+from backend.app.models.employee import Employee
+from backend.app.dependencies.database import get_db
 
 #  This enables Bearer token in Swagger
 security = HTTPBearer()
-
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -31,7 +30,6 @@ async def get_current_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     return user
-
 
 async def require_admin(user = Depends(get_current_user)):
     if user.role != "admin":

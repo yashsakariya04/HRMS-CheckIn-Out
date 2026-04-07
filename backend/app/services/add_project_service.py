@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from fastapi import HTTPException
-from app.models.project import Project
-from app.models.organization import Organization
+from backend.app.models.project import Project
+from backend.app.models.organization import Organization
 
 
 #  CREATE PROJECT

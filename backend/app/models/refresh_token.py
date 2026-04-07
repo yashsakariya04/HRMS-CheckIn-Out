@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import ForeignKey, Boolean, TIMESTAMP, text, String
 from sqlalchemy.orm import Mapped, mapped_column
-from app.models import Base
+from backend.app.models import Base
 
 
 class RefreshToken(Base):

@@ -2,14 +2,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
-from app.schemas.add_project import ProjectCreate, ProjectResponse
-from app.services.add_project_service import (
+from backend.app.schemas.add_project import ProjectCreate, ProjectResponse
+from backend.app.services.add_project_service import (
     create_project,
     get_projects,
     delete_project
 )
-from app.dependencies.database import get_db
-from app.dependencies.auth import require_admin
+from backend.app.dependencies.database import get_db
+from backend.app.dependencies.auth import require_admin
 
 router = APIRouter(prefix="/project", tags=["Project"])
 
@@ -23,7 +23,6 @@ async def add_project(
 ):
     return await create_project(data, db)
 
-
 #  GET ALL PROJECTS
 @router.get("/", response_model=list[ProjectResponse])
 async def list_projects(
@@ -31,8 +30,7 @@ async def list_projects(
 ):
     return await get_projects(db)
 
-
-# 🔹 DELETE PROJECT (Admin only)
+#  DELETE PROJECT (Admin only)
 @router.delete("/{project_id}")
 async def remove_project(
     project_id: UUID,

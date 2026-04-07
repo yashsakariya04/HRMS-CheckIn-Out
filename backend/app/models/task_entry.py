@@ -6,9 +6,9 @@ from sqlalchemy import (
     Numeric, CheckConstraint, UniqueConstraint, Index, BigInteger
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
-from sqlalchemy.orm import Mapped, mapped_column
-
-from app.models import Base
+from sqlalchemy.orm import Mapped, mapped_column , relationship
+from backend.app.models.project import Project
+from backend.app.models import Base
 
 class TaskEntry(Base):
     __tablename__ = "task_entry"
@@ -61,3 +61,4 @@ class TaskEntry(Base):
     nullable=False
 
     )
+    Project: Mapped["Project"] = relationship("Project", lazy="joined")
