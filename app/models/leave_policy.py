@@ -10,7 +10,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models import Base
 
-
 class LeavePolicy(Base):
     __tablename__ = "leave_policy"
 
