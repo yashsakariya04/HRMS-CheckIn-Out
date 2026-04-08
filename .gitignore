@@ -1,7 +1,11 @@
 venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .env
 keys/
 *.egg-info/
 .pytest_cache/
+.vscode/
+.DS_Store
