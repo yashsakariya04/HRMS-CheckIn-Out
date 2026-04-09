@@ -28,13 +28,13 @@ async def lifespan(app):
     scheduler.shutdown()
     
 app = FastAPI(lifespan=lifespan ,title="HRMS Backend API", version="1.0.0", docs_url="/docs")    
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=settings.get_cors_origins(),
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.get_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(auth_router.router,       prefix="/api/v1")
 app.include_router(attendance_router.router, prefix="/api/v1")
