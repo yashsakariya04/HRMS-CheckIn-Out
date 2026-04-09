@@ -3,8 +3,8 @@ from fastapi import HTTPException
 from datetime import date
 from uuid import UUID
 
-from backend.app.models.holiday import Holiday
-from backend.app.models.organization import Organization
+from app.models.holiday import Holiday
+from app.models.organization import Organization
 
 
 async def create_holiday(data, db):

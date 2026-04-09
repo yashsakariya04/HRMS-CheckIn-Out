@@ -3,9 +3,9 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.core.security import decode_token
-from backend.app.models.employee import Employee
-from backend.app.dependencies.database import get_db
+from app.core.security import decode_token
+from app.models.employee import Employee
+from app.dependencies.database import get_db
 
 #  This enables Bearer token in Swagger
 security = HTTPBearer()

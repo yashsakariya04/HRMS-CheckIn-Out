@@ -1,9 +1,9 @@
 # services/employee_service.py
 from sqlalchemy import select
 from fastapi import HTTPException
-from backend.app.models.employee import Employee
+from app.models.employee import Employee
 import uuid
-from backend.app.models.organization import Organization
+from app.models.organization import Organization
 from uuid import UUID
 
 async def create_employee(data, db):

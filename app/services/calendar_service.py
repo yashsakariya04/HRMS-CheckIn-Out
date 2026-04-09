@@ -12,47 +12,37 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Dict, List
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.employee import Employee
 from app.models.leave_wfh_request import LeaveWFHRequest
 from app.schemas.calendar import CalendarDayEntry, CalendarResponse
 
 
-def get_monthly_calendar(
-    db: Session,
+async def get_monthly_calendar(
+    db: AsyncSession,
     organization_id,
     month: int,
     year: int,
 ) -> CalendarResponse:
-    """
-    Return date-wise grouped leave and wfh entries for the given month.
-
-    Steps:
-        1. Compute month boundaries
-        2. Single JOIN query — approved leave/wfh overlapping the month
-        3. Expand each multi-day record into individual dates
-        4. Keep only dates within the target month
-        5. Group by date string and return
-    """
     start_of_month = date(year, month, 1)
     end_of_month = date(year, month, calendar.monthrange(year, month)[1])
 
-    # Single query — JOIN with employee to avoid N+1
-    rows = (
-        db.query(LeaveWFHRequest, Employee.full_name)
+    stmt = (
+        select(LeaveWFHRequest, Employee.full_name)
         .join(Employee, Employee.id == LeaveWFHRequest.employee_id)
-        .filter(
+        .where(
             LeaveWFHRequest.organization_id == organization_id,
             LeaveWFHRequest.status == "approved",
             LeaveWFHRequest.request_type.in_(["leave", "wfh"]),
             LeaveWFHRequest.from_date <= end_of_month,
             LeaveWFHRequest.to_date >= start_of_month,
         )
-        .all()
     )
+    result = await db.execute(stmt)
+    rows = result.all()
 
-    # Group by date — expand multi-day ranges in Python
     grouped: Dict[str, List[CalendarDayEntry]] = defaultdict(list)
 
     for req, employee_name in rows:
