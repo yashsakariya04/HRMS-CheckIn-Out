@@ -1,3 +1,22 @@
+"""
+app/services/leave_service.py — Admin Leave Summary Service
+============================================================
+Provides admin-facing leave data: all requests and per-employee
+leave balance summaries.
+
+Non-technical summary:
+----------------------
+Admins use this service to get a bird's-eye view of leave across
+all employees. Two main functions:
+
+  get_all_requests  : Returns every leave/WFH request ever submitted,
+                      with the employee's name attached.
+
+  get_leave_summary : Returns each employee's casual and comp_off
+                      balance for the current month — how much they
+                      have left and how much they've used.
+"""
+
 from datetime import date
 from uuid import UUID
 
@@ -10,13 +29,27 @@ from app.models.leave_wfh_request import LeaveWFHRequest as LeaveRequest
 
 
 async def _get_employee_name(employee_id: UUID, db: AsyncSession) -> str:
+    """
+    Helper: return the employee's full name, or their UUID string as fallback.
+
+    Args:
+        employee_id: UUID of the employee.
+        db:          Async database session.
+    """
     result = await db.execute(select(Employee).where(Employee.id == employee_id))
     emp = result.scalars().first()
     return emp.full_name if emp and emp.full_name else str(employee_id)
 
 
 async def get_all_requests(db: AsyncSession) -> list[dict]:
-    """Return every leave / WFH request across all employees, newest first."""
+    """
+    Return every leave/WFH request across all employees, newest first.
+
+    Used by the admin panel to review and act on pending requests.
+
+    Returns:
+        List of dicts with request details and the employee's name.
+    """
     result = await db.execute(
         select(LeaveRequest).order_by(LeaveRequest.created_at.desc())
     )
@@ -36,8 +69,13 @@ async def get_all_requests(db: AsyncSession) -> list[dict]:
 
 async def get_leave_summary(db: AsyncSession) -> list[dict]:
     """
-    For every employee, return their casual and comp_off balances
-    for the current month, read directly from employee_leave_balance.
+    Return per-employee casual and comp_off leave balances for the current month.
+
+    Reads directly from employee_leave_balance for the current year/month.
+    Groups rows by employee and extracts casual and comp_off balances.
+
+    Returns:
+        List of dicts, one per employee, with balance and usage figures.
     """
     today = date.today()
 
@@ -49,7 +87,7 @@ async def get_leave_summary(db: AsyncSession) -> list[dict]:
     )
     balance_rows = result.scalars().all()
 
-    # Group by employee
+    # Group balance rows by employee ID
     by_employee: dict[UUID, dict] = {}
     for row in balance_rows:
         emp_id = row.employee_id

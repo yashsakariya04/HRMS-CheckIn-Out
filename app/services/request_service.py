@@ -213,6 +213,21 @@
 
 
 # app/services/request_service.py
+"""
+app/services/request_service.py — Leave/WFH Request Business Logic
+==================================================================
+Handles the full lifecycle of employee requests: create, list,
+approve, reject, and cancel.
+
+Request types and their approval side-effects:
+  leave        → deducts 1 day from leave balance (comp_off first, then casual;
+                 casual can go negative — debt is offset by future accruals)
+  wfh          → marks attendance session work_mode = 'wfh' for each day
+  missing_time → fills in checkout time on the linked session (18:30 UTC)
+  comp_off     → credits +1 to comp_off balance (employee earned a day off)
+
+Rejection has zero side-effects on any balance or session.
+"""
 from datetime import date, datetime, timezone, timedelta
 from typing import List
 from uuid import UUID
@@ -233,10 +248,12 @@ from app.schemas.request_Emp import RequestCreate, RequestListResponse, RequestR
 # ─────────────────────────────────────────────────────────────
 
 def _to_response(req: LeaveWFHRequest) -> RequestResponse:
+    """Convert a LeaveWFHRequest ORM object to a RequestResponse schema."""
     return RequestResponse.model_validate(req)
 
 
 def _to_list_response(req: LeaveWFHRequest, employee: Employee) -> RequestListResponse:
+    """Convert a (LeaveWFHRequest, Employee) join row to a RequestListResponse schema."""
     return RequestListResponse(
         id=req.id,
         request_type=req.request_type,
@@ -255,6 +272,7 @@ def _to_list_response(req: LeaveWFHRequest, employee: Employee) -> RequestListRe
 
 
 async def _get_or_404(db: AsyncSession, request_id) -> LeaveWFHRequest:
+    """Fetch a request by ID or raise HTTP 404 if not found."""
     result = await db.execute(
         select(LeaveWFHRequest).where(LeaveWFHRequest.id == request_id)
     )
@@ -397,6 +415,12 @@ async def create_request(
     employee: Employee,
     body: RequestCreate,
 ) -> RequestResponse:
+    """
+    Create a new pending request for the employee.
+
+    For missing_time requests, automatically links the attendance session
+    for the specified date. Raises 400 if no session exists on that date.
+    """
     linked_session_id = None
 
     if body.request_type == "missing_time":
@@ -434,6 +458,7 @@ async def get_user_requests(
     db: AsyncSession,
     employee: Employee,
 ) -> List[RequestResponse]:
+    """Return all requests submitted by the given employee, newest first."""
     result = await db.execute(
         select(LeaveWFHRequest)
         .where(LeaveWFHRequest.employee_id == employee.id)
@@ -443,6 +468,7 @@ async def get_user_requests(
 
 
 async def get_all_requests(db: AsyncSession) -> List[RequestListResponse]:
+    """Return all requests across all employees with employee details, newest first."""
     result = await db.execute(
         select(LeaveWFHRequest, Employee)
         .join(Employee, Employee.id == LeaveWFHRequest.employee_id)
@@ -456,6 +482,12 @@ async def approve_request(
     request_id,
     admin: Employee,
 ) -> RequestResponse:
+    """
+    Approve a pending request and apply its side-effects.
+
+    Raises 400 if the request is not in 'pending' status.
+    See module docstring for per-type side-effects.
+    """
     req = await _get_or_404(db, request_id)
 
     if req.status != "pending":
@@ -559,6 +591,11 @@ async def reject_request(
     admin: Employee,
     note: str | None,
 ) -> RequestResponse:
+    """
+    Reject a pending request with an optional note.
+    No balance or session changes are made.
+    Raises 400 if the request is not in 'pending' status.
+    """
     req = await _get_or_404(db, request_id)
 
     if req.status != "pending":
@@ -583,6 +620,11 @@ async def cancel_request(
     request_id,
     employee: Employee,
 ) -> None:
+    """
+    Employee cancels their own pending request (hard delete).
+    Raises 403 if the request belongs to a different employee.
+    Raises 400 if the request is no longer pending.
+    """
     req = await _get_or_404(db, request_id)
 
     if req.employee_id != employee.id:

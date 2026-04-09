@@ -1,17 +1,31 @@
-from datetime import date
-from typing import Optional, List
+"""
+app/routers/attendance.py — Attendance API Endpoints
+=====================================================
+Handles daily check-in, check-out, session history, and CSV export.
+
+Endpoints:
+  GET  /api/v1/attendance/today            — Get today's session (if any)
+  POST /api/v1/attendance/check-in         — Check in for the day (with tasks)
+  PATCH /api/v1/attendance/check-out       — Check out for the day
+  GET  /api/v1/attendance/avg-hours        — Average hours worked this month
+  GET  /api/v1/attendance/sessions         — Session history for a month
+  GET  /api/v1/attendance/sessions/download — Download sessions as CSV
+"""
+
 import io
+from datetime import date
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies.database import get_db
 from app.dependencies.auth import get_current_user
-from app.models.employee import Employee
+from app.dependencies.database import get_db
 from app.models.attendance_session import AttendanceSession
-from app.schemas.attendance import CheckInRequest, SessionResponse, SessionListResponse
+from app.models.employee import Employee
+from app.schemas.attendance import CheckInRequest, SessionListResponse, SessionResponse
 from app.services import attendance_service
 
 router = APIRouter(prefix="/attendance", tags=["Attendance"])
@@ -22,6 +36,10 @@ async def get_today(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
+    """
+    Return today's attendance session for the logged-in employee.
+    Returns null if the employee has not checked in today.
+    """
     return await attendance_service.get_today_session(db, current_user.id)
 
 
@@ -31,6 +49,10 @@ async def check_in(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
+    """
+    Check in for the day. Must include at least one task.
+    Returns 409 if already checked in today.
+    """
     return await attendance_service.check_in(
         db=db,
         employee_id=current_user.id,
@@ -44,6 +66,10 @@ async def check_out(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
+    """
+    Check out for the day. Calculates and stores total hours worked.
+    Returns 404 if not checked in, 409 if already checked out.
+    """
     return await attendance_service.check_out(db=db, employee_id=current_user.id)
 
 
@@ -52,6 +78,10 @@ async def get_avg_hours(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
+    """
+    Return the average daily hours worked by the employee this calendar month.
+    Only counts days where checkout was recorded.
+    """
     today = date.today()
     result = await db.execute(
         select(func.avg(AttendanceSession.total_hours)).where(
@@ -72,11 +102,17 @@ async def download_sessions_csv(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
+    """
+    Download the employee's attendance sessions for a month as a CSV file.
+    Defaults to the current month if month/year are not provided.
+    """
     today = date.today()
     target_month = month or today.month
     target_year = year or today.year
 
-    sessions = await attendance_service.get_sessions_for_month(db, current_user.id, target_month, target_year)
+    sessions = await attendance_service.get_sessions_for_month(
+        db, current_user.id, target_month, target_year
+    )
     csv_str = attendance_service.generate_csv(sessions)
 
     month_name = date(target_year, target_month, 1).strftime("%B").lower()
@@ -96,8 +132,14 @@ async def get_sessions(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
+    """
+    Return the employee's attendance sessions for a given month.
+    Defaults to the current month. Each session includes its task list.
+    """
     today = date.today()
     target_month = month or today.month
     target_year = year or today.year
 
-    return await attendance_service.get_sessions_for_month(db, current_user.id, target_month, target_year)
+    return await attendance_service.get_sessions_for_month(
+        db, current_user.id, target_month, target_year
+    )
