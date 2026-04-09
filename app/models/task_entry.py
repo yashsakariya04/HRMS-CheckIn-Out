@@ -1,4 +1,3 @@
-# app/models/task_entry.py
 import uuid
 from datetime import datetime
 
@@ -57,10 +56,6 @@ class TaskEntry(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False
-    )
-
-    session: Mapped["AttendanceSession"] = relationship(
-        "AttendanceSession", back_populates="tasks"
     )
 
     project: Mapped["Project"] = relationship("Project", lazy="joined")

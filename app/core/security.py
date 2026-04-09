@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from jose import jwt, JWTError
 
-from app.config import settings
+from app.core.config import settings
 
 pwd_context = None  # retained for potential future password flows
 

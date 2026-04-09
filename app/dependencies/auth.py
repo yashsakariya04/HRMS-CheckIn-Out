@@ -10,7 +10,6 @@ from app.dependencies.database import get_db
 #  This enables Bearer token in Swagger
 security = HTTPBearer()
 
-
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db)
@@ -31,7 +30,6 @@ async def get_current_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     return user
-
 
 async def require_admin(user = Depends(get_current_user)):
     if user.role != "admin":

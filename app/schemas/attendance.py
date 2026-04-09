@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import date, datetime
 
-
 # ─── Task schemas ──────────────────────────────────────────────────────────
 
 class TaskInput(BaseModel):
@@ -102,7 +101,7 @@ class BalanceResponse(BaseModel):
     accrued: float
     used: float
     adjusted: float
-    closing_balance: float
+    closing_balance: Optional[float] = None
 
     model_config = {"from_attributes": True}
 

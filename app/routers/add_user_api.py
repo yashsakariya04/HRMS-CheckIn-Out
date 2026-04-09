@@ -1,30 +1,34 @@
-# routers/add_user_api.py
-
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-
-from app.database import get_db
-from app.dependencies import get_current_user, require_admin
-from app.models.employee import Employee
+from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
 from app.schemas.add_user import CreateEmployeeRequest, UpdateProfileRequest
-from app.services.add_user_service import create_employee, update_profile
+from app.services.add_user_service import create_employee, update_profile, delete_employee
+from app.dependencies.database import get_db
+from app.dependencies.auth import require_admin, get_current_user
 
 router = APIRouter(prefix="/employee", tags=["Employee"])
 
-
 @router.post("/add")
-def add_employee(
+async def add_employee(
     data: CreateEmployeeRequest,
-    db: Session = Depends(get_db),
-    _admin: Employee = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
 ):
-    return create_employee(data, db)
-
+    return await create_employee(data, db)
 
 @router.put("/update-profile")
-def update_profile_route(
+async def update_profile_route(
     data: UpdateProfileRequest,
-    user: Employee = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    return update_profile(user, data, db)
+    return await update_profile(user, data, db)
+
+
+@router.delete("/{employee_id}")
+async def remove_employee(
+    employee_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
+):
+    return await delete_employee(employee_id, db)

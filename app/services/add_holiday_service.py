@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from fastapi import HTTPException
 from datetime import date
+from uuid import UUID
 
 from app.models.holiday import Holiday
 from app.models.organization import Organization
@@ -45,3 +46,16 @@ async def create_holiday(data, db):
 async def get_holidays(db):
     result = await db.execute(select(Holiday))
     return result.scalars().all()
+
+
+async def delete_holiday(holiday_id: UUID, db):
+    result = await db.execute(select(Holiday).where(Holiday.id == holiday_id))
+    holiday = result.scalars().first()
+
+    if not holiday:
+        raise HTTPException(status_code=404, detail="Holiday not found")
+
+    await db.delete(holiday)
+    await db.commit()
+
+    return {"message": "Holiday deleted successfully"}

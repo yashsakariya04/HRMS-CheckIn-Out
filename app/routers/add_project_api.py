@@ -23,7 +23,6 @@ async def add_project(
 ):
     return await create_project(data, db)
 
-
 #  GET ALL PROJECTS
 @router.get("/", response_model=list[ProjectResponse])
 async def list_projects(
@@ -31,8 +30,7 @@ async def list_projects(
 ):
     return await get_projects(db)
 
-
-# 🔹 DELETE PROJECT (Admin only)
+#  DELETE PROJECT (Admin only)
 @router.delete("/{project_id}")
 async def remove_project(
     project_id: UUID,

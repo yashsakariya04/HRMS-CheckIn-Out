@@ -1,4 +1,3 @@
-# app/models/refresh_token.py
 import uuid
 from datetime import datetime
 
@@ -23,10 +22,8 @@ class RefreshToken(Base):
         index=True,
     )
 
-    # Unique identifier used for token rotation detection
     token_id: Mapped[str] = mapped_column(String, unique=True, index=True)
 
-    # SHA-256 hash of the raw token — raw token is NEVER stored
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
 
     expires_at: Mapped[datetime] = mapped_column(
@@ -34,7 +31,6 @@ class RefreshToken(Base):
         nullable=False
     )
 
-    # RULE: On logout, set is_revoked=True. Never delete. Purge job cleans nightly.
     is_revoked: Mapped[bool] = mapped_column(
         Boolean,
         server_default=text("false"),
