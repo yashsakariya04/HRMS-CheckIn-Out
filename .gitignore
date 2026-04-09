@@ -1,15 +1,11 @@
-# Python
+venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Virtual Environment
-venv/
 .env
-
-# VS Code
+keys/
+*.egg-info/
+.pytest_cache/
 .vscode/
-
-# OS
 .DS_Store

@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
 
-from app.config import settings
+from app.core.config import settings
 
 # Retained as a placeholder in case password-based auth is added later.
 pwd_context = None
