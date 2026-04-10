@@ -1,217 +1,3 @@
-# from datetime import date, datetime, timezone, timedelta
-# from typing import List
-# from uuid import UUID
-
-# from fastapi import HTTPException, status
-# from sqlalchemy import select
-# from sqlalchemy.ext.asyncio import AsyncSession
-
-# from app.models.attendance_session import AttendanceSession
-# from app.models.employee import Employee
-# from app.models.employee_leave_balance import EmployeeLeaveBalance
-# from app.models.leave_wfh_request import LeaveWFHRequest
-# from app.schemas.request_Emp import RequestCreate, RequestListResponse, RequestResponse
-
-
-# def _to_response(req: LeaveWFHRequest) -> RequestResponse:
-#     return RequestResponse.model_validate(req)
-
-
-# def _to_list_response(req: LeaveWFHRequest, employee: Employee) -> RequestListResponse:
-#     return RequestListResponse(
-#         id=req.id,
-#         request_type=req.request_type,
-#         from_date=req.from_date,
-#         to_date=req.to_date,
-#         reason=req.reason,
-#         status=req.status,
-#         linked_session_id=req.linked_session_id,
-#         rejection_note=req.rejection_note,
-#         reviewed_at=req.reviewed_at,
-#         created_at=req.created_at,
-#         employee_id=employee.id,
-#         employee_name=employee.full_name,
-#         employee_email=employee.email,
-#     )
-
-
-# async def _get_or_404(db: AsyncSession, request_id) -> LeaveWFHRequest:
-#     result = await db.execute(select(LeaveWFHRequest).where(LeaveWFHRequest.id == request_id))
-#     req = result.scalars().first()
-#     if not req:
-#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found.")
-#     return req
-
-
-# async def _get_leave_balance(db: AsyncSession, employee_id, leave_type: str, target_date: date) -> EmployeeLeaveBalance:
-#     result = await db.execute(
-#         select(EmployeeLeaveBalance).where(
-#             EmployeeLeaveBalance.employee_id == employee_id,
-#             EmployeeLeaveBalance.leave_type == leave_type,
-#             EmployeeLeaveBalance.year == target_date.year,
-#             EmployeeLeaveBalance.month == target_date.month,
-#         )
-#     )
-#     row = result.scalars().first()
-#     if not row:
-#         raise HTTPException(
-#             status_code=status.HTTP_400_BAD_REQUEST,
-#             detail=f"No {leave_type} balance record found for this month.",
-#         )
-#     return row
-
-
-# async def create_request(db: AsyncSession, employee: Employee, body: RequestCreate) -> RequestResponse:
-#     linked_session_id = None
-
-#     if body.request_type == "missing_time":
-#         result = await db.execute(
-#             select(AttendanceSession).where(
-#                 AttendanceSession.employee_id == employee.id,
-#                 AttendanceSession.session_date == body.from_date,
-#             )
-#         )
-#         session = result.scalars().first()
-#         if not session:
-#             raise HTTPException(
-#                 status_code=status.HTTP_400_BAD_REQUEST,
-#                 detail=f"No attendance session found for {body.from_date}.",
-#             )
-#         linked_session_id = session.id
-
-#     req = LeaveWFHRequest(
-#         employee_id=employee.id,
-#         organization_id=employee.organization_id,
-#         request_type=body.request_type,
-#         from_date=body.from_date,
-#         to_date=body.to_date,
-#         reason=body.reason,
-#         linked_session_id=linked_session_id,
-#         status="pending",
-#     )
-#     db.add(req)
-#     await db.commit()
-#     await db.refresh(req)
-#     return _to_response(req)
-
-
-# async def get_user_requests(db: AsyncSession, employee: Employee) -> List[RequestResponse]:
-#     result = await db.execute(
-#         select(LeaveWFHRequest).where(
-#             LeaveWFHRequest.employee_id == employee.id
-#         ).order_by(LeaveWFHRequest.created_at.desc())
-#     )
-#     return [_to_response(r) for r in result.scalars().all()]
-
-
-# async def get_all_requests(db: AsyncSession) -> List[RequestListResponse]:
-#     result = await db.execute(
-#         select(LeaveWFHRequest, Employee)
-#         .join(Employee, Employee.id == LeaveWFHRequest.employee_id)
-#         .order_by(LeaveWFHRequest.created_at.desc())
-#     )
-#     return [_to_list_response(req, emp) for req, emp in result.all()]
-
-
-# async def approve_request(db: AsyncSession, request_id, admin: Employee) -> RequestResponse:
-#     req = await _get_or_404(db, request_id)
-
-#     if req.status != "pending":
-#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Request is already {req.status}.")
-
-#     if req.request_type == "leave":
-#         days = (req.to_date - req.from_date).days + 1
-#         balance = await _get_leave_balance(db, req.employee_id, "casual", req.from_date)
-#         if float(balance.closing_balance or 0) < days:
-#             raise HTTPException(
-#                 status_code=status.HTTP_400_BAD_REQUEST,
-#                 detail=f"Insufficient leave balance. Available: {balance.closing_balance}, Required: {days}.",
-#             )
-#         balance.used = float(balance.used) + days
-#         balance.closing_balance = (
-#             float(balance.opening_balance) + float(balance.accrued)
-#             - float(balance.used) + float(balance.adjusted)
-#         )
-
-#     elif req.request_type == "wfh":
-#         current = req.from_date
-#         while current <= req.to_date:
-#             result = await db.execute(
-#                 select(AttendanceSession).where(
-#                     AttendanceSession.employee_id == req.employee_id,
-#                     AttendanceSession.session_date == current,
-#                 )
-#             )
-#             session = result.scalars().first()
-#             if session:
-#                 session.work_mode = "wfh"
-#             current += timedelta(days=1)
-
-#     elif req.request_type == "missing_time":
-#         if not req.linked_session_id:
-#             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No linked session found on this request.")
-#         result = await db.execute(
-#             select(AttendanceSession).where(AttendanceSession.id == req.linked_session_id)
-#         )
-#         session = result.scalars().first()
-#         if not session:
-#             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linked attendance session no longer exists.")
-#         checkout_time = datetime(
-#             session.session_date.year, session.session_date.month, session.session_date.day,
-#             18, 30, 0, tzinfo=timezone.utc,
-#         )
-#         session.check_out_at = checkout_time
-#         session.is_corrected = True
-#         check_in = session.check_in_at
-#         if check_in.tzinfo is None:
-#             check_in = check_in.replace(tzinfo=timezone.utc)
-#         session.total_hours = round((checkout_time - check_in).total_seconds() / 3600, 2)
-
-#     elif req.request_type == "comp_off":
-#         balance = await _get_leave_balance(db, req.employee_id, "comp_off", req.from_date)
-#         balance.accrued = float(balance.accrued) + 1
-#         balance.closing_balance = (
-#             float(balance.opening_balance) + float(balance.accrued)
-#             - float(balance.used) + float(balance.adjusted)
-#         )
-
-#     req.status = "approved"
-#     req.reviewed_by = admin.id
-#     req.reviewed_at = datetime.now(timezone.utc)
-
-#     await db.commit()
-#     await db.refresh(req)
-#     return _to_response(req)
-
-
-# async def reject_request(db: AsyncSession, request_id, admin: Employee, note: str | None) -> RequestResponse:
-#     req = await _get_or_404(db, request_id)
-
-#     if req.status != "pending":
-#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Request is already {req.status}.")
-
-#     req.status = "rejected"
-#     req.reviewed_by = admin.id
-#     req.reviewed_at = datetime.now(timezone.utc)
-#     req.rejection_note = note
-
-#     await db.commit()
-#     await db.refresh(req)
-#     return _to_response(req)
-
-
-# async def cancel_request(db: AsyncSession, request_id, employee: Employee) -> None:
-#     req = await _get_or_404(db, request_id)
-
-#     if req.employee_id != employee.id:
-#         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only cancel your own requests.")
-#     if req.status != "pending":
-#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cannot cancel a request that is already {req.status}.")
-
-#     await db.delete(req)
-#     await db.commit()
-
-
 # app/services/request_service.py
 """
 app/services/request_service.py — Leave/WFH Request Business Logic
@@ -220,16 +6,22 @@ Handles the full lifecycle of employee requests: create, list,
 approve, reject, and cancel.
 
 Request types and their approval side-effects:
-  leave        → deducts 1 day from leave balance (comp_off first, then casual;
-                 casual can go negative — debt is offset by future accruals)
+  leave        → deducts working days only (skips weekends + holidays — no sandwich policy)
+                 uses comp_off balance first, then casual; casual can go negative
   wfh          → marks attendance session work_mode = 'wfh' for each day
-  missing_time → fills in checkout time on the linked session (18:30 UTC)
+  missing_time → fills in checkout time on the linked session
   comp_off     → credits +1 to comp_off balance (employee earned a day off)
+
+Submission-time validation rules (enforced in create_request):
+  1. Leave cannot be taken on a weekend (Saturday / Sunday).
+  2. Leave cannot be taken on a company holiday.
+  3. Leave cannot overlap an already-approved WFH request on the same dates.
+  4. Comp-off date must be a weekend (Sat/Sun) or a company holiday.
 
 Rejection has zero side-effects on any balance or session.
 """
 from datetime import date, datetime, timezone, timedelta
-from typing import List
+from typing import List, Set
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -239,8 +31,149 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.attendance_session import AttendanceSession
 from app.models.employee import Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
+from app.models.holiday import Holiday
 from app.models.leave_wfh_request import LeaveWFHRequest
 from app.schemas.request_Emp import RequestCreate, RequestListResponse, RequestResponse
+
+
+# ─────────────────────────────────────────────────────────────
+# DATE UTILITY HELPERS
+# ─────────────────────────────────────────────────────────────
+
+def _date_range(from_date: date, to_date: date) -> List[date]:
+    """Return every calendar date from from_date to to_date inclusive."""
+    days = []
+    current = from_date
+    while current <= to_date:
+        days.append(current)
+        current += timedelta(days=1)
+    return days
+
+
+def _is_weekend(d: date) -> bool:
+    """Return True if the date is Saturday (5) or Sunday (6)."""
+    return d.weekday() >= 5
+
+
+async def _get_holiday_dates(
+    db: AsyncSession,
+    organization_id,
+    from_date: date,
+    to_date: date,
+) -> Set[date]:
+    """
+    Return the set of holiday dates for the organization that fall
+    within [from_date, to_date].
+    """
+    result = await db.execute(
+        select(Holiday.holiday_date).where(
+            Holiday.organization_id == organization_id,
+            Holiday.holiday_date >= from_date,
+            Holiday.holiday_date <= to_date,
+        )
+    )
+    return {row for row in result.scalars().all()}
+
+
+def _working_days(all_dates: List[date], holiday_dates: Set[date]) -> List[date]:
+    """
+    Filter a list of dates down to actual working days only.
+    Excludes weekends and company holidays (no sandwich policy).
+    """
+    return [d for d in all_dates if not _is_weekend(d) and d not in holiday_dates]
+
+
+# ─────────────────────────────────────────────────────────────
+# SUBMISSION VALIDATION RULES
+# ─────────────────────────────────────────────────────────────
+
+async def _validate_leave_request(
+    db: AsyncSession,
+    employee: Employee,
+    body: RequestCreate,
+) -> None:
+    """
+    Enforce all business rules for leave requests at submission time.
+
+    Rules checked:
+      1. No leave on weekends (Saturday / Sunday).
+      2. No leave on a company holiday (it is already a day off).
+      3. No leave on a date where an approved WFH request already exists.
+    """
+    all_dates = _date_range(body.from_date, body.to_date)
+
+    # Rule 1 — no weekends
+    weekend_dates = [d for d in all_dates if _is_weekend(d)]
+    if weekend_dates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Leave cannot be taken on weekends. "
+                f"Weekend dates in your range: "
+                f"{', '.join(str(d) for d in weekend_dates)}."
+            ),
+        )
+
+    # Rule 2 — no leave on a holiday
+    holiday_dates = await _get_holiday_dates(
+        db, employee.organization_id, body.from_date, body.to_date
+    )
+    if holiday_dates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Leave cannot be taken on a company holiday. "
+                f"Holiday dates in your range: "
+                f"{', '.join(str(d) for d in sorted(holiday_dates))}."
+            ),
+        )
+
+    # Rule 3 — no leave where WFH is already approved
+    wfh_result = await db.execute(
+        select(LeaveWFHRequest).where(
+            LeaveWFHRequest.employee_id == employee.id,
+            LeaveWFHRequest.request_type == "wfh",
+            LeaveWFHRequest.status == "approved",
+            LeaveWFHRequest.from_date <= body.to_date,
+            LeaveWFHRequest.to_date >= body.from_date,
+        )
+    )
+    if wfh_result.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Leave cannot be taken on dates where a WFH request is already approved.",
+        )
+
+
+async def _validate_comp_off_request(
+    db: AsyncSession,
+    employee: Employee,
+    body: RequestCreate,
+) -> None:
+    """
+    Enforce business rules for comp-off requests at submission time.
+
+    Rule: The date must be a weekend (Saturday/Sunday) or a company holiday.
+    Comp-off is earned by working on a non-working day.
+    """
+    d = body.from_date  # comp_off is always a single day
+
+    if _is_weekend(d):
+        return  # weekend — valid
+
+    holiday_dates = await _get_holiday_dates(
+        db, employee.organization_id, d, d
+    )
+    if d in holiday_dates:
+        return  # holiday — valid
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            f"Comp-off can only be claimed for working on a weekend or a company holiday. "
+            f"{d} is a regular working day."
+        ),
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -329,27 +262,24 @@ async def _approve_leave(
     req: LeaveWFHRequest,
 ) -> None:
     """
-    Deduct 1 day of leave using this priority:
+    Deduct the number of actual working days in the leave range.
 
-    Priority 1 — comp_off balance > 0
-        → deduct 1 from comp_off, casual untouched.
+    Working days = all dates in [from_date, to_date] that are NOT
+    weekends and NOT company holidays (no sandwich policy).
 
-    Priority 2 — comp_off = 0, casual balance > 0
-        → deduct 1 from casual.
-
-    Priority 3 — both = 0 (or no row exists yet)
-        → deduct 1 from casual anyway → balance goes negative (debt).
-          Future monthly accruals will offset the debt before adding
-          spendable leave (+1 each month offsets -1 before it becomes
-          spendable — handled by the rollover job).
-
-    NOTE: This function always deducts exactly 1 day regardless of the
-    date range on the request, because your rule is 1 leave = 1 calendar
-    event, not 1 leave per day in the range.  If you later want multi-day
-    deductions change `days = 1` to `days = (req.to_date - req.from_date).days + 1`
-    and apply the same priority chain per-day or as a lump sum.
+    Priority chain for deduction:
+      Priority 1 — comp_off balance > 0  → deduct from comp_off.
+      Priority 2 — comp_off = 0          → deduct from casual (may go negative).
     """
-    days = 1  # 1 leave token consumed per approval regardless of date range
+    all_dates = _date_range(req.from_date, req.to_date)
+    holiday_dates = await _get_holiday_dates(
+        db, req.organization_id, req.from_date, req.to_date
+    )
+    days = len(_working_days(all_dates, holiday_dates))
+
+    if days == 0:
+        # Entire range is weekends/holidays — nothing to deduct.
+        return
 
     comp_off_row = await _get_balance_or_none(
         db, req.employee_id, "comp_off", req.from_date
@@ -418,9 +348,19 @@ async def create_request(
     """
     Create a new pending request for the employee.
 
-    For missing_time requests, automatically links the attendance session
-    for the specified date. Raises 400 if no session exists on that date.
+    Runs all submission-time validation rules before saving:
+      - leave     : no weekends, no holidays, no overlap with approved WFH
+      - comp_off  : date must be a weekend or company holiday
+      - missing_time: links the attendance session for the date
     """
+    # —— Submission-time rule enforcement ———————————————————————————
+    if body.request_type == "leave":
+        await _validate_leave_request(db, employee, body)
+
+    elif body.request_type == "comp_off":
+        await _validate_comp_off_request(db, employee, body)
+
+    # —— missing_time: link the attendance session —————————————————————
     linked_session_id = None
 
     if body.request_type == "missing_time":
@@ -446,6 +386,7 @@ async def create_request(
         to_date=body.to_date,
         reason=body.reason,
         linked_session_id=linked_session_id,
+        checkout_time=body.checkout_time if body.request_type == "missing_time" else None,
         status="pending",
     )
     db.add(req)
@@ -535,20 +476,17 @@ async def approve_request(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Linked attendance session no longer exists.",
             )
-        checkout_time = datetime(
-            session.session_date.year,
-            session.session_date.month,
-            session.session_date.day,
-            18, 30, 0,
+        session.check_out_at = datetime.combine(
+            session.session_date,
+            req.checkout_time,
             tzinfo=timezone.utc,
         )
-        session.check_out_at = checkout_time
         session.is_corrected = True
         check_in = session.check_in_at
         if check_in.tzinfo is None:
             check_in = check_in.replace(tzinfo=timezone.utc)
         session.total_hours = round(
-            (checkout_time - check_in).total_seconds() / 3600, 2
+            (session.check_out_at - check_in).total_seconds() / 3600, 2
         )
 
     elif req.request_type == "comp_off":

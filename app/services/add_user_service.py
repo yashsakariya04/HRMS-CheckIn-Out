@@ -13,12 +13,14 @@ Admins use this service to manage the employee roster:
 """
 
 import uuid
+from datetime import date
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.models.employee import Department, Employee
+from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.organization import Organization
 
 
@@ -100,6 +102,38 @@ async def create_employee(data, db) -> Employee:
         designation=data.designation,
     )
     db.add(employee)
+    await db.flush()  # get employee.id before creating balance rows
+
+    # Seed leave balance rows for the current month so the new employee
+    # immediately has 1 casual leave available instead of waiting for
+    # the monthly rollover job to run on the 1st.
+    today = date.today()
+    initial_balances = [
+        EmployeeLeaveBalance(
+            employee_id=employee.id,
+            leave_type="casual",
+            year=today.year,
+            month=today.month,
+            opening_balance=0.0,
+            accrued=1.0,
+            used=0.0,
+            adjusted=0.0,
+            closing_balance=1.0,
+        ),
+        EmployeeLeaveBalance(
+            employee_id=employee.id,
+            leave_type="comp_off",
+            year=today.year,
+            month=today.month,
+            opening_balance=0.0,
+            accrued=0.0,
+            used=0.0,
+            adjusted=0.0,
+            closing_balance=0.0,
+        ),
+    ]
+    db.add_all(initial_balances)
+
     await db.commit()
     await db.refresh(employee)
     return employee

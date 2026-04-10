@@ -25,11 +25,11 @@ Employees can cancel their own pending requests.
 """
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from sqlalchemy import (
     CheckConstraint, Date, ForeignKey,
-    Index, String, TIMESTAMP, text,
+    Index, String, Time, TIMESTAMP, text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -77,6 +77,10 @@ class LeaveWFHRequest(Base):
     linked_session_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("attendance_session.id", ondelete="SET NULL"),
     )
+
+    # Only used for missing_time requests — the exact checkout time the employee missed
+    # Stored as TIME (no timezone) and combined with session_date on approval
+    checkout_time: Mapped[time | None] = mapped_column(Time, nullable=True)
 
     # Lifecycle: "pending" → "approved" or "rejected"
     # Only admins can change status. Employees can delete pending requests.
