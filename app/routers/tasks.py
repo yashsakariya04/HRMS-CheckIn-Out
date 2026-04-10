@@ -5,14 +5,14 @@ Handles adding, viewing, and deleting tasks within today's attendance session.
 
 Non-technical summary:
 ----------------------
-While checked in, employees can log individual tasks (what work they did
-and how many hours). Tasks can only be added or deleted while the session
-is still open (before checkout).
+Employees can add tasks to today's session at any time (before or after checkout),
+as long as a session exists for today. At least one task must always remain —
+deletion is only allowed when two or more tasks exist on the session.
 
 Endpoints:
   GET    /api/v1/tasks/today  — List all tasks logged today
-  POST   /api/v1/tasks        — Add a new task to today's session
-  DELETE /api/v1/tasks/{id}   — Delete a task from today's open session
+  POST   /api/v1/tasks        — Add a task to today's session (anytime)
+  DELETE /api/v1/tasks/{id}   — Delete a task (only if 2+ tasks exist on the session)
 """
 
 import uuid
@@ -52,12 +52,12 @@ class TaskOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-async def _get_open_session_today(db: AsyncSession, employee_id) -> AttendanceSession:
+async def _get_session_today(db: AsyncSession, employee_id) -> AttendanceSession:
     """
-    Helper: fetch today's attendance session and verify it is still open.
+    Helper: fetch today's attendance session (open or closed).
 
-    Raises 404 if the employee hasn't checked in today.
-    Raises 409 if the employee has already checked out (session closed).
+    Raises 404 if the employee has no session for today at all.
+    Does NOT check whether the session is open — tasks can be added anytime.
     """
     result = await db.execute(
         select(AttendanceSession).where(
@@ -66,16 +66,10 @@ async def _get_open_session_today(db: AsyncSession, employee_id) -> AttendanceSe
         )
     )
     session = result.scalars().first()
-
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="You have not checked in today. Please check in before logging tasks.",
-        )
-    if session.check_out_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Your session is already closed. Tasks can only be added while checked in.",
+            detail="No session found for today. Please check in first.",
         )
     return session
 
@@ -114,10 +108,11 @@ async def create_task(
     current_user: Employee = Depends(get_current_user),
 ):
     """
-    Add a new task to today's open attendance session.
+    Add a new task to today's attendance session.
 
     Rules:
-      - Employee must be checked in (session must exist and be open)
+      - A session must exist for today (checked in at some point)
+      - Session can be open or already checked out
       - hours must be > 0 and <= 24
       - sort_order is auto-assigned based on existing task count
     """
@@ -127,7 +122,7 @@ async def create_task(
             detail="hours must be between 0 (exclusive) and 24 (inclusive).",
         )
 
-    session = await _get_open_session_today(db, current_user.id)
+    session = await _get_session_today(db, current_user.id)
 
     # Assign sort_order = number of existing tasks (0-based sequential)
     count_result = await db.execute(
@@ -156,11 +151,11 @@ async def delete_task(
     current_user: Employee = Depends(get_current_user),
 ):
     """
-    Delete a task from today's open session.
+    Delete a task from today's session.
 
     Rules:
       - The task must belong to the current employee
-      - The session must still be open (not yet checked out)
+      - The session must have 2 or more tasks — at least one must always remain
     """
     task_result = await db.execute(
         select(TaskEntry).where(
@@ -176,17 +171,16 @@ async def delete_task(
             detail="Task not found or you do not have permission to delete it.",
         )
 
-    # Verify the session is still open before allowing deletion
-    session_result = await db.execute(
-        select(AttendanceSession).where(
-            AttendanceSession.id == task.session_id,
-            AttendanceSession.check_out_at == None,
-        )
+    # Count how many tasks exist on this session
+    count_result = await db.execute(
+        select(TaskEntry).where(TaskEntry.session_id == task.session_id)
     )
-    if not session_result.scalars().first():
+    task_count = len(count_result.scalars().all())
+
+    if task_count < 2:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot delete tasks from a closed session.",
+            detail="Cannot delete the only task on a session. Add another task before deleting this one.",
         )
 
     await db.delete(task)

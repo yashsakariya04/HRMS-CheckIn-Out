@@ -14,29 +14,40 @@ Example response:
       "year": 2025,
       "data": {
         "2025-04-10": [
-          {"employee_name": "Alice", "type": "leave"},
-          {"employee_name": "Bob",   "type": "wfh"}
-        ],
-        "2025-04-15": [
-          {"employee_name": "Charlie", "type": "leave"}
+          {
+            "employee_id": "efe2ea44-a159-447c-a89c-d3bbcd6b2fcf",
+            "employee_name": "Alice",
+            "employee_email": "alice@example.com",
+            "type": "leave",
+            "from_date": "2025-04-10",
+            "to_date": "2025-04-10",
+            "reason": "personal work"
+          }
         ]
       }
     }
 
 Schemas:
-  - CalendarDayEntry : One employee's status on a specific date
+  - CalendarDayEntry : One employee's full leave/WFH entry on a specific date
   - CalendarResponse : Full month calendar with all entries grouped by date
 """
 
+import uuid
+from datetime import date
 from typing import Dict, List
 
 from pydantic import BaseModel
 
 
 class CalendarDayEntry(BaseModel):
-    """One employee's leave or WFH entry on a specific calendar date."""
+    """One employee's full leave or WFH entry on a specific calendar date."""
+    employee_id: uuid.UUID
     employee_name: str
-    type: str  # "leave" or "wfh"
+    employee_email: str
+    type: str        # "leave" or "wfh"
+    from_date: date  # Original request start date
+    to_date: date    # Original request end date
+    reason: str
 
 
 class CalendarResponse(BaseModel):

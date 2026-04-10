@@ -17,7 +17,7 @@ request, and what the backend returns when listing requests.
 """
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Optional
 
 from pydantic import BaseModel, model_validator
@@ -33,16 +33,20 @@ class RequestCreate(BaseModel):
     Validation rules (enforced automatically):
       - request_type must be one of: leave, wfh, missing_time, comp_off
       - from_date must be on or before to_date
-      - missing_time and comp_off must be a single day (from_date == to_date)
+      - comp_off must be a single day (from_date == to_date)
+      - missing_time must be a single day and requires checkout_time ("HH:MM")
     """
     request_type: str
     from_date: date
     to_date: date
     reason: str
+    # Only required for missing_time — the exact checkout time the employee missed
+    # Format: "HH:MM" in 24-hour time, e.g. "18:00"
+    checkout_time: Optional[time] = None
 
     @model_validator(mode="after")
     def validate_dates_and_type(self):
-        """Cross-field validation: type, date order, and single-day constraint."""
+        """Cross-field validation: type, date order, single-day, and checkout_time."""
         if self.request_type not in VALID_TYPES:
             raise ValueError(f"request_type must be one of {VALID_TYPES}")
         if self.from_date > self.to_date:
@@ -52,6 +56,8 @@ class RequestCreate(BaseModel):
                 raise ValueError(
                     f"{self.request_type} must be a single day (from_date == to_date)"
                 )
+        if self.request_type == "missing_time" and self.checkout_time is None:
+            raise ValueError("checkout_time is required for missing_time requests (e.g. '18:00')")
         return self
 
 
@@ -69,6 +75,7 @@ class RequestResponse(BaseModel):
     reason: str
     status: str                              # "pending" | "approved" | "rejected"
     linked_session_id: Optional[uuid.UUID] = None  # Only set for missing_time requests
+    checkout_time: Optional[time] = None     # Only set for missing_time requests
     rejection_note: Optional[str] = None
     reviewed_at: Optional[datetime] = None
     created_at: datetime
@@ -88,6 +95,7 @@ class RequestListResponse(BaseModel):
     reason: str
     status: str
     linked_session_id: Optional[uuid.UUID] = None
+    checkout_time: Optional[time] = None     # Only set for missing_time requests
     rejection_note: Optional[str] = None
     reviewed_at: Optional[datetime] = None
     created_at: datetime

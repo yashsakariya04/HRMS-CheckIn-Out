@@ -33,12 +33,13 @@ async def get_monthly_calendar(
     year: int,
 ) -> CalendarResponse:
     """
-    Return a date-keyed dict of employee leave/WFH entries for the given month.
+    Return a date-keyed dict of all employees' approved leave/WFH entries
+    for the given month across the entire organization.
 
     Steps:
-      1. Query all approved leave/wfh requests overlapping the month.
+      1. Query all approved leave/wfh requests overlapping the month for the org.
       2. For each request, expand the date range (clamped to the month).
-      3. Group entries by ISO date string.
+      3. Group full entry details by ISO date string.
       4. Return sorted by date.
 
     Args:
@@ -54,7 +55,7 @@ async def get_monthly_calendar(
     end_of_month = date(year, month, calendar.monthrange(year, month)[1])
 
     stmt = (
-        select(LeaveWFHRequest, Employee.full_name)
+        select(LeaveWFHRequest, Employee.full_name, Employee.email)
         .join(Employee, Employee.id == LeaveWFHRequest.employee_id)
         .where(
             LeaveWFHRequest.organization_id == organization_id,
@@ -70,7 +71,7 @@ async def get_monthly_calendar(
 
     grouped: Dict[str, List[CalendarDayEntry]] = defaultdict(list)
 
-    for req, employee_name in rows:
+    for req, employee_name, employee_email in rows:
         # Clamp the request range to within the target month
         range_start = max(req.from_date, start_of_month)
         range_end = min(req.to_date, end_of_month)
@@ -80,8 +81,13 @@ async def get_monthly_calendar(
             key = current.isoformat()  # e.g. "2025-04-10"
             grouped[key].append(
                 CalendarDayEntry(
+                    employee_id=req.employee_id,
                     employee_name=employee_name or "Unknown",
+                    employee_email=employee_email,
                     type=req.request_type,
+                    from_date=req.from_date,
+                    to_date=req.to_date,
+                    reason=req.reason,
                 )
             )
             current += timedelta(days=1)
