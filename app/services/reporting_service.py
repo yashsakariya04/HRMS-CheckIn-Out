@@ -123,7 +123,7 @@ async def get_employee_report(
             .where(TaskEntry.session_id == session.id)
             .order_by(TaskEntry.sort_order)
         )
-        tasks = tasks_result.scalars().all()
+        tasks = tasks_result.unique().scalars().all()
 
         records.append(AttendanceRow(
             date=session.session_date,
@@ -170,7 +170,7 @@ async def get_employee_report_csv(employee_id: UUID, db: AsyncSession) -> Stream
             .where(TaskEntry.session_id == session.id)
             .order_by(TaskEntry.sort_order)
         )
-        tasks = tasks_result.scalars().all()
+        tasks = tasks_result.unique().scalars().all()
         task_str = _group_tasks_by_project(_build_task_list(tasks))
 
         writer.writerow([
