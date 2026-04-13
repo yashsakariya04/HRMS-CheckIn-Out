@@ -53,9 +53,8 @@ async def get_all_requests(db: AsyncSession) -> list[dict]:
     result = await db.execute(
         select(LeaveRequest).order_by(LeaveRequest.created_at.desc())
     )
-    rows = []
-    for req in result.scalars().all():
-        rows.append({
+    rows = [
+        {
             "id": req.id,
             "employee_name": await _get_employee_name(req.employee_id, db),
             "request_type": req.request_type,
@@ -63,7 +62,9 @@ async def get_all_requests(db: AsyncSession) -> list[dict]:
             "to_date": req.to_date,
             "reason": req.reason,
             "status": req.status,
-        })
+        }
+        for req in result.scalars().all()
+    ]
     return rows
 
 

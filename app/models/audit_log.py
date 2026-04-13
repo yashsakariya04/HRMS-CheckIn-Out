@@ -24,9 +24,22 @@ rows are physically ordered by insertion time.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, ForeignKey, Index, String, TIMESTAMP, text
-from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
+from sqlalchemy import BigInteger, ForeignKey, Index, JSON, String, TIMESTAMP, text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import types
+
+
+class _INET(types.TypeDecorator):
+    """Cross-dialect INET: uses native INET on PostgreSQL, String(45) elsewhere."""
+    impl = types.String(45)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import INET as PG_INET
+            return dialect.type_descriptor(PG_INET())
+        return dialect.type_descriptor(types.String(45))
 
 from app.models import Base
 
@@ -65,13 +78,13 @@ class AuditLog(Base):
     entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
     # Snapshot of the record BEFORE the change (JSON)
-    old_data: Mapped[dict | None] = mapped_column(JSONB)
+    old_data: Mapped[dict | None] = mapped_column(JSON)
 
     # Snapshot of the record AFTER the change (JSON)
-    new_data: Mapped[dict | None] = mapped_column(JSONB)
+    new_data: Mapped[dict | None] = mapped_column(JSON)
 
     # IP address of the client that made the request (for security tracking)
-    ip_address: Mapped[str | None] = mapped_column(INET)
+    ip_address: Mapped[str | None] = mapped_column(_INET)
 
     # When this log entry was created (immutable)
     created_at: Mapped[datetime] = mapped_column(

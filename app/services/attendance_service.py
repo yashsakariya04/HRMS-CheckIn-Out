@@ -110,6 +110,7 @@ async def check_in(
         ))
 
     await db.commit()
+    db.expire(session)
     await db.refresh(session)
     return session
 
@@ -157,6 +158,12 @@ async def check_out(db: AsyncSession, employee_id) -> AttendanceSession:
     session.total_hours = round((now - check_in).total_seconds() / 3600, 2)
 
     await db.commit()
+
+    # Expire the session object so SQLAlchemy fully discards the in-memory
+    # state (including the already-loaded tasks collection) before refresh.
+    # Without this, the selectin relationship appends a second copy of every
+    # task on top of the ones already in memory — causing duplicates.
+    db.expire(session)
     await db.refresh(session)
     return session
 

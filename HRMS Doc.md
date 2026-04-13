@@ -7,26 +7,26 @@
     "email": "yash.infopulsetech@gmail.com"  
   }  
   output:{  
-    "access\_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJlZmUyZWE0NC1hMTU5LTQ0N2MtYTg5Yy1kM2JiY2Q2YjJmY2YiLCJleHAiOjE3NzU3MTc0MjksImlhdCI6MTc3NTcxMzgyOSwidHlwZSI6ImFjY2VzcyJ9.2jpnR3pwRwALTxc1lvZ\_sXVOnXpGRK-IvCVGWYYpzhU",  
-    "refresh\_token": "4b27d509-73b6-45db-aa89-851e543cf747.daf95eb1-480e-4ed2-b573-6967d876dadc",  
+    "access\_token": "<access_token>",  
+    "refresh\_token": "<refresh_token>",  
     "token\_type": "bearer"  
   }  
     
   2\> auth/refresh  
   Input:{  
-    "refresh\_token": "4b27d509-73b6-45db-aa89-851e543cf747.daf95eb1-480e-4ed2-b573-6967d876dadc"  
+    "refresh\_token": "<refresh_token>"  
   }  
     
   output:{  
-    "access\_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJlZmUyZWE0NC1hMTU5LTQ0N2MtYTg5Yy1kM2JiY2Q2YjJmY2YiLCJleHAiOjE3NzU3MTc1MTksImlhdCI6MTc3NTcxMzkxOSwidHlwZSI6ImFjY2VzcyJ9.X-piXyv\_TF6wg1VU3g5IqPmf2UjVS8bOkulLXOu-Hhg",  
-    "refresh\_token": "4b27d509-73b6-45db-aa89-851e543cf747.daf95eb1-480e-4ed2-b573-6967d876dadc",  
+    "access\_token": "<new_access_token>",  
+    "refresh\_token": "<refresh_token>",  
     "token\_type": "bearer"  
   }  
     
     
   3\> auth/logout  
   Input:{  
-    "refresh\_token": "4b27d509-73b6-45db-aa89-851e543cf747.daf95eb1-480e-4ed2-b573-6967d876dadc"  
+    "refresh\_token": "<refresh_token>"  
   }  
   Output:{  
     "message": "Logged out"  
