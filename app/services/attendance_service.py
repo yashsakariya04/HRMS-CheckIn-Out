@@ -196,7 +196,7 @@ async def get_sessions_for_month(
             .where(TaskEntry.session_id == s.id)
             .order_by(TaskEntry.sort_order)
         )
-        tasks = tasks_result.scalars().all()
+        tasks = tasks_result.unique().scalars().all()
         task_list = [
             {
                 "id": t.id,
