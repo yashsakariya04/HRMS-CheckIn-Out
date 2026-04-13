@@ -14,8 +14,11 @@ These schemas define what the reporting API returns.
 """
 
 from datetime import date, datetime
+from typing import List
 
 from pydantic import BaseModel
+
+from app.schemas.attendance import TaskInSession
 
 
 class EmployeeDropdownItem(BaseModel):
@@ -34,11 +37,11 @@ class AttendanceRow(BaseModel):
     """
     One day's attendance record shown in the admin report table.
 
-    `tasks` is a comma-joined string of all task descriptions for that day
-    (e.g. "Fixed login bug, Code review, Team meeting").
+    `tasks` is a list of TaskInSession objects grouped by project.
+    Each task includes project_id, project_name, description, and hours_logged.
     """
     date: date
-    tasks: str                       # Comma-joined task descriptions
+    tasks: List[TaskInSession]
     check_in_at: datetime
     check_out_at: datetime | None    # None if the employee never checked out
 

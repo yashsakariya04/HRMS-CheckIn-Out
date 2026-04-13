@@ -23,10 +23,37 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from collections import defaultdict
+
 from app.models.attendance_session import AttendanceSession
 from app.models.employee import Employee
 from app.models.task_entry import TaskEntry
+from app.schemas.attendance import TaskInSession
 from app.schemas.reporting import AttendanceRow, EmployeeDropdownItem, ReportingResponse
+
+
+def _build_task_list(tasks: list) -> list:
+    """Convert TaskEntry ORM objects to TaskInSession schema objects."""
+    return [
+        TaskInSession(
+            id=t.id,
+            description=t.description,
+            hours_logged=float(t.hours_logged),
+            project_id=t.project_id,
+            project_name=t.project.name if t.project else "",
+        )
+        for t in tasks
+    ]
+
+
+def _group_tasks_by_project(tasks: list) -> str:
+    """Group TaskInSession objects into 'ProjectA: task1, task2 | ProjectB: task3' format for CSV."""
+    if not tasks:
+        return "—"
+    grouped = defaultdict(list)
+    for t in tasks:
+        grouped[t.project_name or "No Project"].append(t.description)
+    return " | ".join(f"{proj}: {', '.join(descs)}" for proj, descs in grouped.items())
 
 
 async def get_all_employees(db: AsyncSession) -> list[EmployeeDropdownItem]:
@@ -97,11 +124,10 @@ async def get_employee_report(
             .order_by(TaskEntry.sort_order)
         )
         tasks = tasks_result.scalars().all()
-        task_str = ", ".join(t.description for t in tasks) if tasks else "—"
 
         records.append(AttendanceRow(
             date=session.session_date,
-            tasks=task_str,
+            tasks=_build_task_list(tasks),
             check_in_at=session.check_in_at,
             check_out_at=session.check_out_at,
         ))
@@ -145,7 +171,7 @@ async def get_employee_report_csv(employee_id: UUID, db: AsyncSession) -> Stream
             .order_by(TaskEntry.sort_order)
         )
         tasks = tasks_result.scalars().all()
-        task_str = ", ".join(t.description for t in tasks) if tasks else "—"
+        task_str = _group_tasks_by_project(_build_task_list(tasks))
 
         writer.writerow([
             session.session_date.strftime("%d-%m-%Y"),
