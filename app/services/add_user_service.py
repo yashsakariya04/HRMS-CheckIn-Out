@@ -23,20 +23,11 @@ from app.models.employee import Department, Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.organization import Organization
 
-
 async def list_employees(db) -> list:
-    """
-    Return all employees with their department name, ordered alphabetically.
-
-    Does a LEFT JOIN with the department table so employees without a
-    department show department_name = None (displayed as '—' in the UI).
-
-    Returns:
-        List of dicts with: id, email, designation, department_name, is_active
-    """
     result = await db.execute(
         select(Employee, Department.name)
         .outerjoin(Department, Department.id == Employee.department_id)
+        .where(Employee.role == "employee", Employee.is_active == True)
         .order_by(Employee.email)
     )
     rows = result.all()
@@ -50,6 +41,24 @@ async def list_employees(db) -> list:
         }
         for emp, dept_name in rows
     ]
+
+# async def list_employees(db) -> list:
+#     result = await db.execute(
+#         select(Employee, Department.name)
+#         .outerjoin(Department, Department.id == Employee.department_id)
+#         .order_by(Employee.email)
+#     )
+#     rows = result.all()
+#     return [
+#         {
+#             "id": emp.id,
+#             "email": emp.email,
+#             "designation": emp.designation,
+#             "department_name": dept_name,
+#             "is_active": emp.is_active,
+#         }
+#         for emp, dept_name in rows
+#     ]
 
 
 async def create_employee(data, db) -> Employee:
