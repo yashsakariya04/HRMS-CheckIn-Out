@@ -18,6 +18,7 @@ This file contains the tools to create, read, and verify those keys.
 Passwords are NOT used — the system relies entirely on Google OAuth.
 """
 
+import hmac
 import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -140,6 +141,7 @@ def hash_token(token: str) -> str:
 def verify_token(token: str, hashed: str) -> bool:
     """
     Verify that a raw token matches its stored hash.
+    Uses hmac.compare_digest to prevent timing attacks.
 
     Args:
         token:  Raw token string provided by the client.
@@ -148,4 +150,4 @@ def verify_token(token: str, hashed: str) -> bool:
     Returns:
         True if the token matches the hash, False otherwise.
     """
-    return hashlib.sha256(token.encode()).hexdigest() == hashed
+    return hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), hashed)

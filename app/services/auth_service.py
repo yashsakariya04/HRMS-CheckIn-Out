@@ -110,14 +110,17 @@ async def refresh(refresh_token: str, db: AsyncSession) -> dict:
 
     result = await db.execute(
         select(RefreshToken).where(
-            and_(RefreshToken.token_id == token_id, RefreshToken.is_revoked == False)
+            and_(RefreshToken.token_id == token_id, RefreshToken.is_revoked == False)  # noqa: E712
         )
     )
     db_token = result.scalars().first()
 
     if not db_token:
         raise HTTPException(status_code=401, detail="Invalid token")
-    if db_token.expires_at < datetime.now(timezone.utc):
+    expires_at = db_token.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=401, detail="Token expired")
     if not verify_token(secret, db_token.token_hash):
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -147,7 +150,7 @@ async def logout(refresh_token: str, db: AsyncSession) -> None:
 
     result = await db.execute(
         select(RefreshToken).where(
-            and_(RefreshToken.token_id == token_id, RefreshToken.is_revoked == False)
+            and_(RefreshToken.token_id == token_id, RefreshToken.is_revoked == False)  # noqa: E712
         )
     )
     db_token = result.scalars().first()

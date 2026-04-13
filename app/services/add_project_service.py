@@ -42,7 +42,7 @@ async def create_project(data, db) -> Project:
         select(Project).where(
             Project.organization_id == organization.id,
             Project.name == data.name,
-            Project.is_active == True,
+            Project.is_active is True,
         )
     )
     if existing.scalars().first():
@@ -69,7 +69,7 @@ async def get_projects(db) -> list:
     Args:
         db: Async database session.
     """
-    result = await db.execute(select(Project).where(Project.is_active == True))
+    result = await db.execute(select(Project).where(Project.is_active is True))
     return result.scalars().all()
 
 
