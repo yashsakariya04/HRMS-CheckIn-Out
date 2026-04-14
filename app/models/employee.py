@@ -97,8 +97,8 @@ class Employee(Base):
     __tablename__ = "employee"
 
     __table_args__ = (
-        # Database-level enforcement: role must be one of these two values
-        CheckConstraint("role IN ('employee', 'admin')", name="check_role"),
+        # Database-level enforcement: role must be one of these three values
+        CheckConstraint("role IN ('employee', 'admin', 'superadmin')", name="check_role"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

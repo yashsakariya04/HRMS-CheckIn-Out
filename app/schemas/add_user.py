@@ -39,9 +39,11 @@ class EmployeeListItem(BaseModel):
     """
     id: uuid.UUID
     email: str
+    full_name: str | None = None
     designation: str | None = None
-    department_name: str | None = None  # Human-readable name, e.g. "Full Stack"
-    is_active: bool                     # False = deactivated (shown as greyed out)
+    department_name: str | None = None
+    role: str
+    is_active: bool
 
 
 class UpdateProfileRequest(BaseModel):

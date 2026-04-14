@@ -45,6 +45,7 @@ from app.routers import (
     tasks as tasks_router,
 )
 from app.routers import add_holiday_api, add_project_api, add_user_api
+from app.routers import superadmin as superadmin_router
 
 
 @asynccontextmanager
@@ -97,6 +98,7 @@ app.include_router(reporting.router,         prefix="/api/v1")  # Admin attendan
 app.include_router(add_user_api.router,      prefix="/api/v1")  # Admin: add/remove employees
 app.include_router(add_project_api.router,   prefix="/api/v1")  # Admin: manage projects
 app.include_router(add_holiday_api.router,   prefix="/api/v1")  # Admin: manage holidays
+app.include_router(superadmin_router.router, prefix="/api/v1")  # Superadmin: role management
 
 
 @app.get("/health", tags=["Health"])
