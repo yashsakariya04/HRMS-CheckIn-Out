@@ -52,7 +52,7 @@ class Project(Base):
     # False = soft-deleted. Inactive projects don't appear in dropdowns
     # but their historical task entries are preserved.
     is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("true"),
+        Boolean, nullable=False, default=True, server_default=text("true"),
     )
 
     created_at: Mapped[datetime] = mapped_column(

@@ -148,6 +148,7 @@ class Employee(Base):
     # False = deactivated (soft delete). Never hard-delete employees.
     is_active: Mapped[bool] = mapped_column(
         Boolean,
+        default=True,
         server_default=text("true"),
         nullable=False,
     )
