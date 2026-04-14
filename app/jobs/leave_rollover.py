@@ -173,7 +173,7 @@ async def run_leave_rollover(
     try:
         # Fetch all active employees
         result = await db.execute(
-            select(Employee).where(Employee.is_active is True)
+            select(Employee).where(Employee.is_active == True)
         )
         employees: Sequence[Employee] = result.scalars().all()
 
