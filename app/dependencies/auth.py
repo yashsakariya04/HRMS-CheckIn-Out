@@ -61,7 +61,13 @@ async def get_current_user(
 
 
 async def require_admin(user: Employee = Depends(get_current_user)) -> Employee:
-    # Role is also in the JWT but we use the DB-fetched user for consistency
-    if user.role != "admin":
+    # superadmin also passes admin-level checks
+    if user.role not in ("admin", "superadmin"):
         raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+async def require_superadmin(user: Employee = Depends(get_current_user)) -> Employee:
+    if user.role != "superadmin":
+        raise HTTPException(status_code=403, detail="Superadmin access required")
     return user

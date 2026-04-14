@@ -35,8 +35,10 @@ async def list_employees(db) -> list:
         {
             "id": emp.id,
             "email": emp.email,
+            "full_name": emp.full_name,
             "designation": emp.designation,
             "department_name": dept_name,
+            "role": emp.role,
             "is_active": emp.is_active,
         }
         for emp, dept_name in rows
