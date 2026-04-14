@@ -476,11 +476,10 @@ async def approve_request(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Linked attendance session no longer exists.",
             )
-        session.check_out_at = datetime.combine(
-            session.session_date,
-            req.checkout_time,
-            tzinfo=timezone.utc,
-        )
+        IST_OFFSET = timedelta(hours=5, minutes=30)
+        session.check_out_at = (
+            datetime.combine(session.session_date, req.checkout_time) - IST_OFFSET
+        ).replace(tzinfo=timezone.utc)
         session.is_corrected = True
         check_in = session.check_in_at
         if check_in.tzinfo is None:
