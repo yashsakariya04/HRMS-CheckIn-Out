@@ -27,7 +27,7 @@ async def list_employees(db) -> list:
     result = await db.execute(
         select(Employee, Department.name)
         .outerjoin(Department, Department.id == Employee.department_id)
-        .where(Employee.role == "employee", Employee.is_active is True)
+        .where(Employee.role == "employee", Employee.is_active == True)
         .order_by(Employee.email)
     )
     rows = result.all()

@@ -67,7 +67,7 @@ async def get_all_employees(db: AsyncSession) -> list[EmployeeDropdownItem]:
         List of EmployeeDropdownItem sorted alphabetically by name.
     """
     result = await db.execute(
-        select(Employee).where(Employee.is_active is True).order_by(Employee.full_name)
+        select(Employee).where(Employee.is_active == True).order_by(Employee.full_name)
     )
     return [
         EmployeeDropdownItem(id=str(e.id), full_name=e.full_name or "", designation=e.designation)
