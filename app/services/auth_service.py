@@ -69,7 +69,7 @@ async def login(email: str, db: AsyncSession) -> dict:
     user.last_login_at = datetime.now(timezone.utc)
     await db.commit()
 
-    access_token = create_access_token({"sub": str(user.id)})
+    access_token = create_access_token({"sub": str(user.id), "role": user.role})
     refresh_token = create_refresh_token()
     token_id, secret = refresh_token.split(".")
 
@@ -213,7 +213,7 @@ async def google_login(id_token_str: str, db: AsyncSession) -> dict:
     user.last_login_at = datetime.now(timezone.utc)
     await db.commit()
 
-    access_token = create_access_token({"sub": str(user.id)})
+    access_token = create_access_token({"sub": str(user.id), "role": user.role})
     refresh_token = create_refresh_token()
     token_id, secret = refresh_token.split(".")
 

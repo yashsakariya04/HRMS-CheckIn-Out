@@ -22,6 +22,7 @@ from uuid import UUID
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from collections import defaultdict
 
@@ -78,25 +79,8 @@ async def get_all_employees(db: AsyncSession) -> list[EmployeeDropdownItem]:
 async def get_employee_report(
     employee_id: UUID, whole_month: bool, db: AsyncSession
 ) -> ReportingResponse:
-    """
-    Build the attendance report for a specific employee.
-
-    Always computes avg_hours from the current month regardless of whole_month flag.
-    The records list is filtered by whole_month:
-      - False → current month only
-      - True  → all sessions ever
-
-    Args:
-        employee_id: UUID of the employee.
-        whole_month: If True, return all sessions; otherwise current month only.
-        db:          Async database session.
-
-    Returns:
-        ReportingResponse with avg_hours_this_month and records list.
-    """
     today = date.today()
 
-    # Always compute average from current month
     month_result = await db.execute(
         select(AttendanceSession).where(
             AttendanceSession.employee_id == employee_id,
@@ -107,7 +91,6 @@ async def get_employee_report(
     hours = [float(s.total_hours) for s in month_sessions if s.total_hours is not None]
     avg_hours = round(sum(hours) / len(hours), 1) if hours else 0.0
 
-    # Filter sessions based on the whole_month toggle
     stmt = select(AttendanceSession).where(AttendanceSession.employee_id == employee_id)
     if not whole_month:
         stmt = stmt.where(AttendanceSession.session_date >= today.replace(day=1))
@@ -116,39 +99,36 @@ async def get_employee_report(
     result = await db.execute(stmt)
     sessions = result.scalars().all()
 
-    records = []
-    for session in sessions:
-        tasks_result = await db.execute(
-            select(TaskEntry)
-            .where(TaskEntry.session_id == session.id)
-            .order_by(TaskEntry.sort_order)
+    if not sessions:
+        return ReportingResponse(avg_hours_this_month=avg_hours, records=[])
+
+    # Load all tasks for all sessions in one query — no N+1
+    session_ids = [s.id for s in sessions]
+    tasks_result = await db.execute(
+        select(TaskEntry)
+        .options(joinedload(TaskEntry.project))
+        .where(TaskEntry.session_id.in_(session_ids))
+        .order_by(TaskEntry.sort_order)
+    )
+    all_tasks = tasks_result.unique().scalars().all()
+
+    tasks_by_session: dict = {}
+    for t in all_tasks:
+        tasks_by_session.setdefault(t.session_id, []).append(t)
+
+    records = [
+        AttendanceRow(
+            date=s.session_date,
+            tasks=_build_task_list(tasks_by_session.get(s.id, [])),
+            check_in_at=s.check_in_at,
+            check_out_at=s.check_out_at,
         )
-        tasks = tasks_result.unique().scalars().all()
-
-        records.append(AttendanceRow(
-            date=session.session_date,
-            tasks=_build_task_list(tasks),
-            check_in_at=session.check_in_at,
-            check_out_at=session.check_out_at,
-        ))
-
+        for s in sessions
+    ]
     return ReportingResponse(avg_hours_this_month=avg_hours, records=records)
 
 
 async def get_employee_report_csv(employee_id: UUID, db: AsyncSession) -> StreamingResponse:
-    """
-    Generate and stream a CSV attendance report for the given employee.
-
-    Includes all sessions (no month filter). Filename format:
-      report_<employee_name>_<Month_Year>.csv
-
-    Args:
-        employee_id: UUID of the employee.
-        db:          Async database session.
-
-    Returns:
-        StreamingResponse with CSV content and appropriate headers.
-    """
     emp_result = await db.execute(select(Employee).where(Employee.id == employee_id))
     employee = emp_result.scalars().first()
     emp_name = (employee.full_name or str(employee_id)).replace(" ", "_") if employee else str(employee_id)
@@ -160,19 +140,25 @@ async def get_employee_report_csv(employee_id: UUID, db: AsyncSession) -> Stream
     )
     sessions = result.scalars().all()
 
+    # Load all tasks in one query — no N+1
+    session_ids = [s.id for s in sessions]
+    tasks_result = await db.execute(
+        select(TaskEntry)
+        .options(joinedload(TaskEntry.project))
+        .where(TaskEntry.session_id.in_(session_ids))
+        .order_by(TaskEntry.sort_order)
+    )
+    all_tasks = tasks_result.unique().scalars().all()
+    tasks_by_session: dict = {}
+    for t in all_tasks:
+        tasks_by_session.setdefault(t.session_id, []).append(t)
+
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Date", "Reporting Task", "Check In Time", "Check Out Time"])
 
     for session in sessions:
-        tasks_result = await db.execute(
-            select(TaskEntry)
-            .where(TaskEntry.session_id == session.id)
-            .order_by(TaskEntry.sort_order)
-        )
-        tasks = tasks_result.unique().scalars().all()
-        task_str = _group_tasks_by_project(_build_task_list(tasks))
-
+        task_str = _group_tasks_by_project(_build_task_list(tasks_by_session.get(session.id, [])))
         writer.writerow([
             session.session_date.strftime("%d-%m-%Y"),
             task_str,

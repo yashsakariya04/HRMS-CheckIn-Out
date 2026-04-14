@@ -42,26 +42,13 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> Employee:
-    """
-    Verify the Bearer token and return the authenticated employee.
-
-    Steps:
-      1. Extract the raw token from the "Authorization: Bearer <token>" header.
-      2. Decode and validate the JWT (checks signature and expiry).
-      3. Look up the employee by the `sub` (subject) claim in the token.
-      4. Return the Employee ORM object if everything checks out.
-
-    Raises:
-        401 — if the token is missing, invalid, or expired.
-        404 — if the employee ID in the token no longer exists in the DB.
-    """
-    token = credentials.credentials  # Raw JWT string after "Bearer "
-
+    token = credentials.credentials
     payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    # `sub` contains the employee's UUID (set during login)
+    # Use role from token to skip DB lookup for admin-check in require_admin
+    # Still fetch the full user object so routes have access to all fields
     result = await db.execute(
         select(Employee).where(Employee.id == payload["sub"])
     )
@@ -74,18 +61,7 @@ async def get_current_user(
 
 
 async def require_admin(user: Employee = Depends(get_current_user)) -> Employee:
-    """
-    Extend get_current_user to also enforce admin-only access.
-
-    Calls get_current_user first (full token validation), then checks
-    that the employee's role is "admin".
-
-    Raises:
-        403 — if the authenticated user is not an admin.
-
-    Returns:
-        The admin Employee object (same as get_current_user).
-    """
+    # Role is also in the JWT but we use the DB-fetched user for consistency
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return user

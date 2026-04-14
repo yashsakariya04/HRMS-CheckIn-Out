@@ -194,16 +194,25 @@ async def get_sessions_for_month(
     )
     sessions = result.scalars().all()
 
+    if not sessions:
+        return []
+
+    # Load all tasks for all sessions in one query — no N+1
+    session_ids = [s.id for s in sessions]
+    tasks_result = await db.execute(
+        select(TaskEntry)
+        .options(joinedload(TaskEntry.project))
+        .where(TaskEntry.session_id.in_(session_ids))
+        .order_by(TaskEntry.sort_order)
+    )
+    all_tasks = tasks_result.unique().scalars().all()
+
+    tasks_by_session: dict = {}
+    for t in all_tasks:
+        tasks_by_session.setdefault(t.session_id, []).append(t)
+
     output = []
     for s in sessions:
-        # Load tasks with their project names in one query
-        tasks_result = await db.execute(
-            select(TaskEntry)
-            .options(joinedload(TaskEntry.project))
-            .where(TaskEntry.session_id == s.id)
-            .order_by(TaskEntry.sort_order)
-        )
-        tasks = tasks_result.unique().scalars().all()
         task_list = [
             {
                 "id": t.id,
@@ -212,7 +221,7 @@ async def get_sessions_for_month(
                 "project_id": t.project_id,
                 "project_name": t.project.name if t.project else "",
             }
-            for t in tasks
+            for t in tasks_by_session.get(s.id, [])
         ]
         output.append({
             "id": s.id,
@@ -223,7 +232,6 @@ async def get_sessions_for_month(
             "work_mode": s.work_mode,
             "is_corrected": s.is_corrected,
             "tasks": task_list,
-            # Comma-joined task descriptions for quick display in tables
             "tasks_summary": ", ".join(t["description"] for t in task_list),
         })
     return output
