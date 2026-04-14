@@ -22,90 +22,63 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.models.employee import Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.leave_wfh_request import LeaveWFHRequest as LeaveRequest
 
 
-async def _get_employee_name(employee_id: UUID, db: AsyncSession) -> str:
-    """
-    Helper: return the employee's full name, or their UUID string as fallback.
-
-    Args:
-        employee_id: UUID of the employee.
-        db:          Async database session.
-    """
-    result = await db.execute(select(Employee).where(Employee.id == employee_id))
-    emp = result.scalars().first()
-    return emp.full_name if emp and emp.full_name else str(employee_id)
-
-
 async def get_all_requests(db: AsyncSession) -> list[dict]:
-    """
-    Return every leave/WFH request across all employees, newest first.
-
-    Used by the admin panel to review and act on pending requests.
-
-    Returns:
-        List of dicts with request details and the employee's name.
-    """
     result = await db.execute(
-        select(LeaveRequest).order_by(LeaveRequest.created_at.desc())
+        select(LeaveRequest, Employee)
+        .join(Employee, Employee.id == LeaveRequest.employee_id)
+        .order_by(LeaveRequest.created_at.desc())
     )
-    rows = [
+    return [
         {
             "id": req.id,
-            "employee_name": await _get_employee_name(req.employee_id, db),
+            "employee_name": emp.full_name or str(emp.id),
             "request_type": req.request_type,
             "from_date": req.from_date,
             "to_date": req.to_date,
             "reason": req.reason,
             "status": req.status,
         }
-        for req in result.scalars().all()
+        for req, emp in result.all()
     ]
-    return rows
 
 
 async def get_leave_summary(db: AsyncSession) -> list[dict]:
-    """
-    Return per-employee casual and comp_off leave balances for the current month.
-
-    Reads directly from employee_leave_balance for the current year/month.
-    Groups rows by employee and extracts casual and comp_off balances.
-
-    Returns:
-        List of dicts, one per employee, with balance and usage figures.
-    """
     today = date.today()
 
     result = await db.execute(
-        select(EmployeeLeaveBalance).where(
+        select(EmployeeLeaveBalance, Employee)
+        .join(Employee, Employee.id == EmployeeLeaveBalance.employee_id)
+        .where(
             EmployeeLeaveBalance.year == today.year,
             EmployeeLeaveBalance.month == today.month,
         )
     )
-    balance_rows = result.scalars().all()
+    rows = result.all()
 
-    # Group balance rows by employee ID
     by_employee: dict[UUID, dict] = {}
-    for row in balance_rows:
-        emp_id = row.employee_id
+    for balance_row, emp in rows:
+        emp_id = balance_row.employee_id
         if emp_id not in by_employee:
-            by_employee[emp_id] = {"casual": None, "comp_off": None}
-        if row.leave_type in ("casual", "comp_off"):
-            by_employee[emp_id][row.leave_type] = row
+            by_employee[emp_id] = {"name": emp.full_name or str(emp_id), "casual": None, "comp_off": None}
+        if balance_row.leave_type in ("casual", "comp_off"):
+            by_employee[emp_id][balance_row.leave_type] = balance_row
 
-    rows = []
-    for emp_id, balances in by_employee.items():
-        casual = balances["casual"]
-        comp = balances["comp_off"]
-        rows.append({
-            "employee_name": await _get_employee_name(emp_id, db),
+    output = []
+    for emp_id, data in by_employee.items():
+        casual = data["casual"]
+        comp = data["comp_off"]
+        output.append({
+            "employee_name": data["name"],
             "casual_balance": float(casual.closing_balance or 0) if casual else 0.0,
             "casual_used": float(casual.used) if casual else 0.0,
             "comp_off_balance": float(comp.closing_balance or 0) if comp else 0.0,
             "comp_off_used": float(comp.used) if comp else 0.0,
         })
-    return rows
+    return output

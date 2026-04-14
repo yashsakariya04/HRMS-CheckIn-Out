@@ -35,7 +35,10 @@ from app.core.config import settings
 # but should be set to False in production to reduce noise.
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=True,
+    echo=False,
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True,
 )
 
 # ── Session factory ───────────────────────────────────────────────────────────
