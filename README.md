@@ -65,9 +65,11 @@ OpenSSL (for generating JWT signing keys)
 **Step 1. Clone the repository**
 
 ```bash
-git clone https://github.com/your-org/HRMS-CheckIn-Out.git
-cd HRMS-CheckIn-Out/backend
+git clone https://github.com/YOUR-USERNAME/HRMS-backend.git
+cd HRMS-backend
 ```
+
+(Replace `YOUR-USERNAME` with your GitHub username)
 
 **Step 2. Generate RSA keys for JWT signing**
 
