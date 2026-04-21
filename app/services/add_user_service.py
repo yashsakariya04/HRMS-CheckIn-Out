@@ -108,10 +108,10 @@ async def create_employee(data, db) -> Employee:
             year=today.year,
             month=today.month,
             opening_balance=0.0,
-            accrued=0.0,
+            accrued=1.0,
             used=0.0,
             adjusted=0.0,
-            closing_balance=0.0,
+            closing_balance=1.0,
         ),
         EmployeeLeaveBalance(
             employee_id=employee.id,
