@@ -28,6 +28,7 @@ from app.models.employee import Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.leave_wfh_request import LeaveWFHRequest as LeaveRequest
 
+# changes whole function 
 
 async def get_all_requests(db: AsyncSession) -> list[dict]:
     result = await db.execute(
@@ -44,6 +45,7 @@ async def get_all_requests(db: AsyncSession) -> list[dict]:
             "to_date": req.to_date,
             "reason": req.reason,
             "status": req.status,
+            "created_at": req.created_at,
         }
         for req, emp in result.all()
     ]

@@ -64,7 +64,7 @@ async def list_requests(
     return await leave_service.get_all_requests(db)
 
 
-@router.patch("/{request_id}/approve", response_model=RequestResponse)
+@router.patch("/{request_id}/approve", response_model=RequestListResponse)
 async def approve_request(
     request_id: str,
     db: AsyncSession = Depends(get_db),
