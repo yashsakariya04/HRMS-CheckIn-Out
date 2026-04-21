@@ -23,7 +23,7 @@ Rejection has zero side-effects on any balance or session.
 from datetime import date, datetime, timezone, timedelta
 from typing import List, Set
 from uuid import UUID
-
+from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -518,8 +518,20 @@ async def approve_request(
     req.reviewed_at = datetime.now(timezone.utc)
 
     await db.commit()
-    await db.refresh(req)
+
+    result = await db.execute(
+        select(LeaveWFHRequest)
+        .options(selectinload(LeaveWFHRequest.employee))
+        .where(LeaveWFHRequest.id == req.id)
+    )
+
+    req = result.scalars().first()
+
     return _to_response(req)
+    
+    # await db.commit()
+    # await db.refresh(req)
+    # return _to_response(req)
 
 
 async def reject_request(
