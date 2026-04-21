@@ -44,24 +44,6 @@ async def list_employees(db) -> list:
         for emp, dept_name in rows
     ]
 
-# async def list_employees(db) -> list:
-#     result = await db.execute(
-#         select(Employee, Department.name)
-#         .outerjoin(Department, Department.id == Employee.department_id)
-#         .order_by(Employee.email)
-#     )
-#     rows = result.all()
-#     return [
-#         {
-#             "id": emp.id,
-#             "email": emp.email,
-#             "designation": emp.designation,
-#             "department_name": dept_name,
-#             "is_active": emp.is_active,
-#         }
-#         for emp, dept_name in rows
-#     ]
-
 
 async def create_employee(data, db) -> Employee:
     """
@@ -125,8 +107,8 @@ async def create_employee(data, db) -> Employee:
             leave_type="casual",
             year=today.year,
             month=today.month,
-            opening_balance=0.0,
-            accrued=1.0,
+            opening_balance=1.0,
+            accrued=0.0,
             used=0.0,
             adjusted=0.0,
             closing_balance=1.0,

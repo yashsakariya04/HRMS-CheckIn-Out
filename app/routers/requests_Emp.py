@@ -24,6 +24,7 @@ from app.schemas.request_Emp import (
     RequestCreate, RequestListResponse, RequestReject, RequestResponse,
 )
 from app.services import request_service
+from app.services import leave_service
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
@@ -59,7 +60,8 @@ async def list_requests(
     Admin only: return all leave/WFH requests from every employee.
     Includes employee name and email for each request.
     """
-    return await request_service.get_all_requests(db)
+    # return await request_service.get_all_requests(db)                     changes
+    return await leave_service.get_all_requests(db)
 
 
 @router.patch("/{request_id}/approve", response_model=RequestResponse)
