@@ -99,33 +99,61 @@ async def create_employee(data, db) -> Employee:
 
     # Seed leave balance rows for the current month so the new employee
     # immediately has 1 casual leave available instead of waiting for
-    # the monthly rollover job to run on the 1st.
     today = date.today()
-    initial_balances = [
-        EmployeeLeaveBalance(
+    for leave_type, accrued, closing in [
+        ("casual",   1.0, 1.0),
+        ("comp_off", 0.0, 0.0),
+    ]:
+        existing_balance = await db.execute(
+            select(EmployeeLeaveBalance).where(
+                EmployeeLeaveBalance.employee_id == employee.id,
+                EmployeeLeaveBalance.leave_type == leave_type,
+                EmployeeLeaveBalance.year == today.year,
+                EmployeeLeaveBalance.month == today.month,
+            )
+        )
+        if existing_balance.scalars().first():
+            continue  # rollover already created this row — skip to avoid double-count
+
+        db.add(EmployeeLeaveBalance(
             employee_id=employee.id,
-            leave_type="casual",
+            leave_type=leave_type,
             year=today.year,
             month=today.month,
-            opening_balance=1.0,
-            accrued=0.0,
+            opening_balance=0.0,  # 0 not 1 — accrued carries the 1, matching rollover structure
+            accrued=accrued,
             used=0.0,
             adjusted=0.0,
-            closing_balance=1.0,
-        ),
-        EmployeeLeaveBalance(
-            employee_id=employee.id,
-            leave_type="comp_off",
-            year=today.year,
-            month=today.month,
-            opening_balance=0.0,
-            accrued=0.0,
-            used=0.0,
-            adjusted=0.0,
-            closing_balance=0.0,
-        ),
-    ]
-    db.add_all(initial_balances)
+            closing_balance=closing,
+        )) 
+    
+    # the monthly rollover job to run on the 1st.
+    # today = date.today()
+    # initial_balances = [
+    #     EmployeeLeaveBalance(
+    #         employee_id=employee.id,
+    #         leave_type="casual",
+    #         year=today.year,
+    #         month=today.month,
+    #         opening_balance=1.0,
+    #         accrued=0.0,
+    #         used=0.0,
+    #         adjusted=0.0,
+    #         closing_balance=1.0,
+    #     ),
+    #     EmployeeLeaveBalance(
+    #         employee_id=employee.id,
+    #         leave_type="comp_off",
+    #         year=today.year,
+    #         month=today.month,
+    #         opening_balance=0.0,
+    #         accrued=0.0,
+    #         used=0.0,
+    #         adjusted=0.0,
+    #         closing_balance=0.0,
+    #     ),
+    # ]
+    # db.add_all(initial_balances)
 
     await db.commit()
     await db.refresh(employee)
