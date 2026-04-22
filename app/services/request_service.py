@@ -870,78 +870,18 @@ async def _approve_leave(
     req: LeaveWFHRequest,
 ) -> None:
     """
-    Deduct the number of actual working days in the leave range.
+    Leave approval does NOT touch the ledger.
 
-    Working days = all dates in [from_date, to_date] that are NOT
-    weekends and NOT company holidays (no sandwich policy).
+    The balance is computed virtually at read-time by balance_service:
+      virtual_balance = latest_ledger_closing - future_approved_leave_days
 
-    Priority chain for deduction:
-      Priority 1 — comp_off balance > 0  → deduct from comp_off.
-      Priority 2 — comp_off = 0          → deduct from casual (may go negative).
+    The rollover job picks up approved leave requests at month-end and
+    writes the correct `used` value into the new month's ledger row.
+
+    This function is kept as a no-op so the call-site in approve_request
+    remains unchanged and all other request types are unaffected.
     """
-    all_dates = _date_range(req.from_date, req.to_date)
-    holiday_dates = await _get_holiday_dates(
-        db, req.organization_id, req.from_date, req.to_date
-    )
-    days = len(_working_days(all_dates, holiday_dates))
-
-    if days == 0:
-        # Entire range is weekends/holidays — nothing to deduct.
-        return
-
-    comp_off_row = await _get_balance_or_none(
-        db, req.employee_id, "comp_off", req.from_date
-    )
-    if comp_off_row is None:
-        # Rollover may not have run yet for this month — look back at the
-        # most recent comp_off row across any month.
-        result = await db.execute(
-            select(EmployeeLeaveBalance)
-            .where(
-                EmployeeLeaveBalance.employee_id == req.employee_id,
-                EmployeeLeaveBalance.leave_type == "comp_off",
-            )
-            .order_by(
-                EmployeeLeaveBalance.year.desc(),
-                EmployeeLeaveBalance.month.desc(),
-            )
-            .limit(1)
-        )
-        comp_off_row = result.scalars().first()
-    comp_off_balance = float(comp_off_row.closing_balance or 0) if comp_off_row else 0.0
-
-    if comp_off_balance > 0:
-        # ── Priority 1: spend comp_off ──────────────────────────────
-        comp_off_row.used = float(comp_off_row.used) + days
-        _recalc_closing(comp_off_row)
-        # casual balance is NOT touched
-
-    else:
-        # ── Priority 2: spend casual (allow negative) ───────────────
-        casual_row = await _get_balance_or_none(
-            db, req.employee_id, "casual", req.from_date
-        )
-
-        if casual_row is None:
-            # No balance row for this month yet (rollover job hasn't run).
-            # Create one on the fly with opening = 0, so the debt is visible.
-            casual_row = EmployeeLeaveBalance(
-                employee_id=req.employee_id,
-                leave_type="casual",
-                year=req.from_date.year,
-                month=req.from_date.month,
-                opening_balance=0,
-                accrued=0,
-                used=0,
-                adjusted=0,
-                closing_balance=0,
-            )
-            db.add(casual_row)
-            await db.flush()  # get the PK before mutating
-
-        casual_row.used = float(casual_row.used) + days
-        _recalc_closing(casual_row)
-        # closing_balance may now be negative — that is intentional
+    pass
 
 
 # ─────────────────────────────────────────────────────────────
