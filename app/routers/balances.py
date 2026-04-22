@@ -17,31 +17,50 @@ from app.dependencies.auth import get_current_user, require_admin
 from app.dependencies.database import get_db
 from app.models.employee import Employee
 from app.schemas.attendance import BalanceResponse
-from app.services.balance_service import _get_current_month_balances
+from app.services.balance_service import compute_realtime_balance, get_balance_rows
 
 router = APIRouter(prefix="/balances", tags=["Leave Balances"])
 
 
-@router.get("/me", response_model=List[BalanceResponse])
+async def _build_balance_response(db, employee_id) -> List[dict]:
+    """
+    Returns balance rows with closing_balance replaced by real-time value.
+    Keeps the same list-of-rows shape the frontend expects.
+    """
+    rows = await get_balance_rows(db, employee_id)
+    realtime = await compute_realtime_balance(db, employee_id)
+
+    result = []
+    for row in rows:
+        d = {
+            "leave_type": row.leave_type,
+            "year": row.year,
+            "month": row.month,
+            "opening_balance": float(row.opening_balance),
+            "accrued": float(row.accrued),
+            "used": float(row.used),
+            "adjusted": float(row.adjusted),
+            "closing_balance": (
+                realtime["casual_balance"] if row.leave_type == "casual"
+                else realtime["comp_off_balance"]
+            ),
+        }
+        result.append(d)
+    return result
+
+
+@router.get("/me")
 async def get_my_balances(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
-    """
-    Return the logged-in employee's leave balances for the current month.
-    Returns one row per leave type (casual, comp_off).
-    """
-    return await _get_current_month_balances(db, current_user.id)
+    return await _build_balance_response(db, current_user.id)
 
 
-@router.get("/{emp_id}", response_model=List[BalanceResponse])
+@router.get("/{emp_id}")
 async def get_employee_balances(
     emp_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(require_admin),
 ):
-    """
-    Admin only: return leave balances for any employee by their ID.
-    Returns current month balances for all leave types.
-    """
-    return await _get_current_month_balances(db, emp_id)
+    return await _build_balance_response(db, emp_id)
