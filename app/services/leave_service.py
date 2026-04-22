@@ -13,11 +13,12 @@ all employees. Two main functions:
                       with the employee's name attached.
 
   get_leave_summary : Returns each employee's casual and comp_off
-                      balance for the current month — how much they
-                      have left and how much they've used.
+                      balance — latest ledger closing minus any future
+                      approved leave days not yet rolled over.
 """
 
-from datetime import date
+from calendar import monthrange
+from datetime import date, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
@@ -26,9 +27,13 @@ from sqlalchemy.orm import joinedload
 
 from app.models.employee import Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
+from app.models.holiday import Holiday
 from app.models.leave_wfh_request import LeaveWFHRequest as LeaveRequest
 
-# changes whole function 
+
+def _is_weekend(d: date) -> bool:
+    return d.weekday() >= 5
+
 
 async def get_all_requests(db: AsyncSession) -> list[dict]:
     result = await db.execute(
@@ -52,33 +57,91 @@ async def get_all_requests(db: AsyncSession) -> list[dict]:
 
 
 async def get_leave_summary(db: AsyncSession) -> list[dict]:
-    today = date.today()
-
+    # ── 1. Latest ledger row per employee per leave type ──────────────
     result = await db.execute(
         select(EmployeeLeaveBalance, Employee)
         .join(Employee, Employee.id == EmployeeLeaveBalance.employee_id)
-        .where(
-            EmployeeLeaveBalance.year == today.year,
-            EmployeeLeaveBalance.month == today.month,
+        .order_by(
+            EmployeeLeaveBalance.employee_id,
+            EmployeeLeaveBalance.leave_type,
+            EmployeeLeaveBalance.year.desc(),
+            EmployeeLeaveBalance.month.desc(),
         )
     )
     rows = result.all()
 
     by_employee: dict[UUID, dict] = {}
+    seen: dict[UUID, set] = {}
     for balance_row, emp in rows:
         emp_id = balance_row.employee_id
         if emp_id not in by_employee:
             by_employee[emp_id] = {"name": emp.full_name or str(emp_id), "casual": None, "comp_off": None}
-        if balance_row.leave_type in ("casual", "comp_off"):
+            seen[emp_id] = set()
+        if balance_row.leave_type in ("casual", "comp_off") and balance_row.leave_type not in seen[emp_id]:
+            seen[emp_id].add(balance_row.leave_type)
             by_employee[emp_id][balance_row.leave_type] = balance_row
 
+    # ── 2. Compute future approved leave days per employee ────────────
+    future_result = await db.execute(
+        select(LeaveRequest).where(
+            LeaveRequest.request_type == "leave",
+            LeaveRequest.status == "approved",
+        )
+    )
+    all_future_requests = future_result.scalars().all()
+
+    # Group future requests by employee, filtered to after their latest ledger month
+    future_days_by_emp: dict[UUID, int] = {}
+    for emp_id, data in by_employee.items():
+        casual_row = data["casual"]
+        if not casual_row:
+            future_days_by_emp[emp_id] = 0
+            continue
+
+        last_ledger_day = date(
+            casual_row.year,
+            casual_row.month,
+            monthrange(casual_row.year, casual_row.month)[1],
+        )
+        emp_future = [
+            r for r in all_future_requests
+            if r.employee_id == emp_id and r.from_date > last_ledger_day
+        ]
+        if not emp_future:
+            future_days_by_emp[emp_id] = 0
+            continue
+
+        org_id = emp_future[0].organization_id
+        min_date = min(r.from_date for r in emp_future)
+        max_date = max(r.to_date for r in emp_future)
+        holiday_result = await db.execute(
+            select(Holiday.holiday_date).where(
+                Holiday.organization_id == org_id,
+                Holiday.holiday_date >= min_date,
+                Holiday.holiday_date <= max_date,
+            )
+        )
+        holiday_dates = {row for row in holiday_result.scalars().all()}
+
+        days = 0
+        for req in emp_future:
+            current = req.from_date
+            while current <= req.to_date:
+                if not _is_weekend(current) and current not in holiday_dates:
+                    days += 1
+                current += timedelta(days=1)
+        future_days_by_emp[emp_id] = days
+
+    # ── 3. Build output with virtual balance ──────────────────────────
     output = []
     for emp_id, data in by_employee.items():
         casual = data["casual"]
         comp = data["comp_off"]
+        future_days = future_days_by_emp.get(emp_id, 0)
+        casual_balance = float(casual.closing_balance or 0) - future_days if casual else 0.0
         output.append({
             "employee_name": data["name"],
-            "casual_balance": float(casual.closing_balance or 0) if casual else 0.0,
+            "casual_balance": casual_balance,
             "casual_used": float(casual.used) if casual else 0.0,
             "comp_off_balance": float(comp.closing_balance or 0) if comp else 0.0,
             "comp_off_used": float(comp.used) if comp else 0.0,
