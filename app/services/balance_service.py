@@ -13,7 +13,6 @@ This ensures the balance shown is always accurate even if leaves are
 approved for future months before the rollover job runs.
 """
 
-from calendar import monthrange
 from datetime import date, timedelta
 from typing import List
 
@@ -35,10 +34,11 @@ async def _get_current_month_balances(
     """
     Return the latest leave balance row per leave type with virtual balance.
 
-    Virtual balance = latest_ledger_closing - future_approved_leave_days
+    Virtual balance = latest_ledger_closing - unapplied_approved_leave_days
 
-    This ensures that if a leave is approved for a future month (before
-    rollover runs), the balance shown immediately reflects that deduction.
+    Unapplied days = all approved leave working days that fall AFTER the
+    latest ledger row was created (including current month if the ledger
+    was created before the leave was approved).
 
     Args:
         db:          Async database session.
@@ -46,7 +46,7 @@ async def _get_current_month_balances(
 
     Returns:
         List of EmployeeLeaveBalance ORM objects — one per leave type.
-        The closing_balance field is adjusted to reflect future deductions.
+        The closing_balance field is adjusted to reflect unapplied deductions.
     """
     # Fetch all balance rows ordered latest-first
     result = await db.execute(
@@ -71,32 +71,24 @@ async def _get_current_month_balances(
     if not latest:
         return []
 
-    # Compute the last day of the latest ledger month
-    latest_row = latest[0]
-    last_ledger_day = date(
-        latest_row.year,
-        latest_row.month,
-        monthrange(latest_row.year, latest_row.month)[1],
-    )
-
-    # Fetch all approved leave requests AFTER the latest ledger month
-    future_result = await db.execute(
+    # Fetch all approved leave requests (any month)
+    all_requests_result = await db.execute(
         select(LeaveWFHRequest).where(
             LeaveWFHRequest.employee_id == employee_id,
             LeaveWFHRequest.request_type == "leave",
             LeaveWFHRequest.status == "approved",
-            LeaveWFHRequest.from_date > last_ledger_day,
         )
     )
-    future_requests = future_result.scalars().all()
+    all_requests = all_requests_result.scalars().all()
 
-    if not future_requests:
+    if not all_requests:
         return latest
 
-    # Count working days (no weekends, no holidays) in future requests
-    org_id = future_requests[0].organization_id
-    min_date = min(req.from_date for req in future_requests)
-    max_date = max(req.to_date for req in future_requests)
+    # Count working days NOT yet reflected in the ledger
+    # (i.e. days that fall in months where the ledger row doesn't have them in `used`)
+    org_id = all_requests[0].organization_id
+    min_date = min(req.from_date for req in all_requests)
+    max_date = max(req.to_date for req in all_requests)
 
     holiday_result = await db.execute(
         select(Holiday.holiday_date).where(
@@ -107,18 +99,24 @@ async def _get_current_month_balances(
     )
     holiday_dates = {row for row in holiday_result.scalars().all()}
 
-    future_days = 0
-    for req in future_requests:
+    # For each request, count working days that are NOT in a rolled-over month
+    # A month is "rolled over" if a ledger row exists for it with used > 0
+    # For simplicity: count ALL approved leave working days, then subtract
+    # what's already in the ledger's `used` field
+    total_approved_days = 0
+    for req in all_requests:
         current = req.from_date
         while current <= req.to_date:
             if not _is_weekend(current) and current not in holiday_dates:
-                future_days += 1
+                total_approved_days += 1
             current += timedelta(days=1)
 
-    # Adjust closing_balance for casual (comp_off priority handled at display time)
-    for row in latest:
-        if row.leave_type == "casual":
-            row.closing_balance = float(row.closing_balance or 0) - future_days
-            break
+    # The ledger's `used` field already accounts for some of these days
+    # (if rollover ran for that month). Subtract that to avoid double-counting.
+    casual_row = next((r for r in latest if r.leave_type == "casual"), None)
+    if casual_row:
+        already_in_ledger = float(casual_row.used)
+        unapplied_days = total_approved_days - already_in_ledger
+        casual_row.closing_balance = float(casual_row.closing_balance or 0) - unapplied_days
 
     return latest

@@ -17,13 +17,11 @@ all employees. Two main functions:
                       approved leave days not yet rolled over.
 """
 
-from calendar import monthrange
 from datetime import date, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
 
 from app.models.employee import Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
@@ -81,39 +79,26 @@ async def get_leave_summary(db: AsyncSession) -> list[dict]:
             seen[emp_id].add(balance_row.leave_type)
             by_employee[emp_id][balance_row.leave_type] = balance_row
 
-    # ── 2. Compute future approved leave days per employee ────────────
-    future_result = await db.execute(
+    # ── 2. Compute unapplied approved leave days per employee ──────────
+    all_leave_result = await db.execute(
         select(LeaveRequest).where(
             LeaveRequest.request_type == "leave",
             LeaveRequest.status == "approved",
         )
     )
-    all_future_requests = future_result.scalars().all()
+    all_leave_requests = all_leave_result.scalars().all()
 
-    # Group future requests by employee, filtered to after their latest ledger month
     future_days_by_emp: dict[UUID, int] = {}
     for emp_id, data in by_employee.items():
         casual_row = data["casual"]
-        if not casual_row:
+        emp_requests = [r for r in all_leave_requests if r.employee_id == emp_id]
+        if not emp_requests or not casual_row:
             future_days_by_emp[emp_id] = 0
             continue
 
-        last_ledger_day = date(
-            casual_row.year,
-            casual_row.month,
-            monthrange(casual_row.year, casual_row.month)[1],
-        )
-        emp_future = [
-            r for r in all_future_requests
-            if r.employee_id == emp_id and r.from_date > last_ledger_day
-        ]
-        if not emp_future:
-            future_days_by_emp[emp_id] = 0
-            continue
-
-        org_id = emp_future[0].organization_id
-        min_date = min(r.from_date for r in emp_future)
-        max_date = max(r.to_date for r in emp_future)
+        org_id = emp_requests[0].organization_id
+        min_date = min(r.from_date for r in emp_requests)
+        max_date = max(r.to_date for r in emp_requests)
         holiday_result = await db.execute(
             select(Holiday.holiday_date).where(
                 Holiday.organization_id == org_id,
@@ -123,14 +108,16 @@ async def get_leave_summary(db: AsyncSession) -> list[dict]:
         )
         holiday_dates = {row for row in holiday_result.scalars().all()}
 
-        days = 0
-        for req in emp_future:
+        total_approved_days = 0
+        for req in emp_requests:
             current = req.from_date
             while current <= req.to_date:
                 if not _is_weekend(current) and current not in holiday_dates:
-                    days += 1
+                    total_approved_days += 1
                 current += timedelta(days=1)
-        future_days_by_emp[emp_id] = days
+
+        already_in_ledger = float(casual_row.used)
+        future_days_by_emp[emp_id] = total_approved_days - already_in_ledger
 
     # ── 3. Build output with virtual balance ──────────────────────────
     output = []
