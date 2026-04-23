@@ -1038,15 +1038,21 @@ async def approve_request(
                 detail="Linked attendance session no longer exists.",
             )
         IST_OFFSET = timedelta(hours=5, minutes=30)
-        session.check_out_at = (
+        check_out_utc = (
             datetime.combine(session.session_date, req.checkout_time) - IST_OFFSET
         ).replace(tzinfo=timezone.utc)
-        session.is_corrected = True
         check_in = session.check_in_at
         if check_in.tzinfo is None:
             check_in = check_in.replace(tzinfo=timezone.utc)
+        if check_out_utc <= check_in:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Checkout time must be after the check-in time.",
+            )
+        session.check_out_at = check_out_utc
+        session.is_corrected = True
         session.total_hours = round(
-            (session.check_out_at - check_in).total_seconds() / 3600, 2
+            (check_out_utc - check_in).total_seconds() / 3600, 2
         )
 
     elif req.request_type == "comp_off":

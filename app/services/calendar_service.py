@@ -78,18 +78,20 @@ async def get_monthly_calendar(
 
         current = range_start
         while current <= range_end:
-            key = current.isoformat()  # e.g. "2025-04-10"
-            grouped[key].append(
-                CalendarDayEntry(
-                    employee_id=req.employee_id,
-                    employee_name=employee_name or "Unknown",
-                    employee_email=employee_email,
-                    type=req.request_type,
-                    from_date=req.from_date,
-                    to_date=req.to_date,
-                    reason=req.reason,
+            # Skip weekends for leave (matches approval-time deduction logic)
+            if req.request_type != "leave" or current.weekday() < 5:
+                key = current.isoformat()  # e.g. "2025-04-10"
+                grouped[key].append(
+                    CalendarDayEntry(
+                        employee_id=req.employee_id,
+                        employee_name=employee_name or "Unknown",
+                        employee_email=employee_email,
+                        type=req.request_type,
+                        from_date=req.from_date,
+                        to_date=req.to_date,
+                        reason=req.reason,
+                    )
                 )
-            )
             current += timedelta(days=1)
 
     return CalendarResponse(month=month, year=year, data=dict(sorted(grouped.items())))
