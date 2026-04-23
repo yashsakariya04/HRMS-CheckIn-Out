@@ -27,6 +27,7 @@ python-dotenv==1.0.1
 
 # Background Jobs
 apscheduler==3.10.4
+python-dateutil==2.9.0
 
 # Testing
 pytest==8.2.0

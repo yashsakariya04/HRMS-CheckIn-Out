@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import get_current_user, require_admin
 from app.dependencies.database import get_db
+from app.jobs.leave_rollover import run_leave_rollover
 from app.schemas.add_user import CreateEmployeeRequest, EmployeeListItem, UpdateProfileRequest
 from app.services.add_user_service import create_employee, delete_employee, list_employees, update_profile
 
@@ -77,3 +78,20 @@ async def remove_employee(
     Returns 404 if not found, 400 if already deactivated.
     """
     return await delete_employee(employee_id, db)
+
+
+@router.post("/trigger-rollover")
+async def trigger_rollover(
+    year: int,
+    month: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    """
+    Admin only: manually trigger leave rollover for a specific month.
+    Used for testing probation logic and verifying cron job behavior.
+
+    Example: POST /api/v1/employee/trigger-rollover?year=2025&month=8
+    """
+    result = await run_leave_rollover(db, year, month)
+    return result

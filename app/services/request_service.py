@@ -612,6 +612,7 @@ from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.holiday import Holiday
 from app.models.leave_wfh_request import LeaveWFHRequest
 from app.schemas.request_Emp import RequestCreate, RequestListResponse, RequestResponse
+from app.jobs.leave_rollover import _is_in_probation
 
 
 # ─────────────────────────────────────────────────────────────
@@ -808,6 +809,7 @@ async def _get_or_create_balance_row(
     employee_id,
     leave_type: str,
     target_date: date,
+    joined_on: date | None = None,
 ) -> EmployeeLeaveBalance:
     """
     Fetch the leave-balance ledger row for (employee, leave_type, year, month).
@@ -845,8 +847,9 @@ async def _get_or_create_balance_row(
     prior = prior_result.scalars().first()
     opening = float(prior.closing_balance) if prior else 0.0
 
-    # For casual leave, add the monthly accrual if rollover hasn't run yet
-    accrued = 1.0 if leave_type == "casual" else 0.0
+    # Respect probation: no accrual for casual during first 6 months
+    in_probation = _is_in_probation(joined_on, target_date.year, target_date.month)
+    accrued = 0.0 if (leave_type != "casual" or in_probation) else 1.0
 
     row = EmployeeLeaveBalance(
         employee_id=employee_id,
@@ -1059,8 +1062,13 @@ async def approve_request(
         # Approval = employee EARNED a comp-off day.
         # Credit +1 to the comp_off ledger row for the request's month
         # immediately so the balance is visible right away.
+        # Fetch employee's joined_on for probation check
+        emp_result = await db.execute(
+            select(Employee.joined_on).where(Employee.id == req.employee_id)
+        )
+        joined_on = emp_result.scalar_one_or_none()
         comp_row = await _get_or_create_balance_row(
-            db, req.employee_id, "comp_off", req.from_date
+            db, req.employee_id, "comp_off", req.from_date, joined_on
         )
         comp_row.accrued = float(comp_row.accrued) + 1.0
         _recalc_closing(comp_row)
