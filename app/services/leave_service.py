@@ -1,149 +1,142 @@
+# """
+# app/services/leave_service.py — Admin Leave Summary Service
+# """
+
+# from uuid import UUID
+
+# from sqlalchemy import select
+# from sqlalchemy.ext.asyncio import AsyncSession
+
+# from app.models.employee import Employee
+# from app.models.employee_leave_balance import EmployeeLeaveBalance
+# from app.models.leave_wfh_request import LeaveWFHRequest as LeaveRequest
+# from app.services.balance_service import compute_realtime_balance
+
+
+# async def get_all_requests(db: AsyncSession) -> list[dict]:
+#     result = await db.execute(
+#         select(LeaveRequest, Employee)
+#         .join(Employee, Employee.id == LeaveRequest.employee_id)
+#         .order_by(LeaveRequest.created_at.desc())
+#     )
+#     return [
+#         {
+#             "id": req.id,
+#             "employee_name": emp.full_name or str(emp.id),
+#             "request_type": req.request_type,
+#             "from_date": req.from_date,
+#             "to_date": req.to_date,
+#             "reason": req.reason,
+#             "status": req.status,
+#             "created_at": req.created_at,
+#         }
+#         for req, emp in result.all()
+#     ]
+
+
+# async def get_leave_summary(db: AsyncSession) -> list[dict]:
+#     # Get all employees who have at least one balance row
+#     result = await db.execute(
+#         select(Employee).join(
+#             EmployeeLeaveBalance, EmployeeLeaveBalance.employee_id == Employee.id
+#         ).distinct()
+#     )
+#     employees = result.scalars().all()
+
+#     output = []
+#     for emp in employees:
+#         balances = await compute_realtime_balance(db, emp.id)
+#         output.append({
+#             "employee_name": emp.full_name or str(emp.id),
+#             **balances,
+#         })
+#     return output
+
+
+
+
 """
 app/services/leave_service.py — Admin Leave Summary Service
-============================================================
-Provides admin-facing leave data: all requests and per-employee
-leave balance summaries.
+===========================================================
+Provides admin-facing data:
+  • get_all_requests() — all leave/WFH/comp-off/missing-time requests with
+                         employee name & email.
+  • get_leave_summary() — per-employee real-time leave balance summary.
 
-Non-technical summary:
-----------------------
-Admins use this service to get a bird's-eye view of leave across
-all employees. Two main functions:
-
-  get_all_requests  : Returns every leave/WFH request ever submitted,
-                      with the employee's name attached.
-
-  get_leave_summary : Returns each employee's casual and comp_off
-                      balance — latest ledger closing minus any future
-                      approved leave days not yet rolled over.
+Both functions delegate balance computation to balance_service so the
+figures shown to admins are always identical to what employees see.
 """
-
-from calendar import monthrange
-from datetime import date, timedelta
-from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
 
 from app.models.employee import Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
-from app.models.holiday import Holiday
 from app.models.leave_wfh_request import LeaveWFHRequest as LeaveRequest
-
-
-def _is_weekend(d: date) -> bool:
-    return d.weekday() >= 5
+from app.services.balance_service import compute_realtime_balance
 
 
 async def get_all_requests(db: AsyncSession) -> list[dict]:
+    """
+    Return every leave/WFH request across all employees, newest first.
+    """
     result = await db.execute(
-        select(LeaveRequest, Employee)
+        select(
+            LeaveRequest.id,
+            LeaveRequest.request_type,
+            LeaveRequest.from_date,
+            LeaveRequest.to_date,
+            LeaveRequest.reason,
+            LeaveRequest.status,
+            LeaveRequest.rejection_note,
+            LeaveRequest.reviewed_at,
+            LeaveRequest.created_at,
+            Employee.id.label("emp_id"),
+            Employee.full_name,
+            Employee.email,
+        )
         .join(Employee, Employee.id == LeaveRequest.employee_id)
         .order_by(LeaveRequest.created_at.desc())
     )
+    rows = result.all()
     return [
         {
-            "id": req.id,
-            "employee_name": emp.full_name or str(emp.id),
-            "request_type": req.request_type,
-            "from_date": req.from_date,
-            "to_date": req.to_date,
-            "reason": req.reason,
-            "status": req.status,
-            "created_at": req.created_at,
+            "id": str(r.id),
+            "employee_id": str(r.emp_id),
+            "employee_name": r.full_name or str(r.emp_id),
+            "employee_email": r.email,
+            "request_type": r.request_type,
+            "from_date": r.from_date,
+            "to_date": r.to_date,
+            "reason": r.reason,
+            "status": r.status,
+            "rejection_note": r.rejection_note,
+            "reviewed_at": r.reviewed_at,
+            "created_at": r.created_at,
         }
-        for req, emp in result.all()
+        for r in rows
     ]
 
 
 async def get_leave_summary(db: AsyncSession) -> list[dict]:
-    # ── 1. Latest ledger row per employee per leave type ──────────────
+    """
+    Return a real-time leave balance summary for every employee who has at
+    least one balance ledger row.
+    """
+    # Fetch only the columns we need — no ORM object, no lazy-load risk
     result = await db.execute(
-        select(EmployeeLeaveBalance, Employee)
-        .join(Employee, Employee.id == EmployeeLeaveBalance.employee_id)
-        .order_by(
-            EmployeeLeaveBalance.employee_id,
-            EmployeeLeaveBalance.leave_type,
-            EmployeeLeaveBalance.year.desc(),
-            EmployeeLeaveBalance.month.desc(),
-        )
+        select(Employee.id, Employee.full_name)
+        .join(EmployeeLeaveBalance, EmployeeLeaveBalance.employee_id == Employee.id)
+        .distinct()
     )
-    rows = result.all()
+    employees = result.all()  # plain Row tuples (id, full_name)
 
-    by_employee: dict[UUID, dict] = {}
-    seen: dict[UUID, set] = {}
-    for balance_row, emp in rows:
-        emp_id = balance_row.employee_id
-        if emp_id not in by_employee:
-            by_employee[emp_id] = {"name": emp.full_name or str(emp_id), "casual": None, "comp_off": None}
-            seen[emp_id] = set()
-        if balance_row.leave_type in ("casual", "comp_off") and balance_row.leave_type not in seen[emp_id]:
-            seen[emp_id].add(balance_row.leave_type)
-            by_employee[emp_id][balance_row.leave_type] = balance_row
-
-    # ── 2. Compute future approved leave days per employee ────────────
-    future_result = await db.execute(
-        select(LeaveRequest).where(
-            LeaveRequest.request_type == "leave",
-            LeaveRequest.status == "approved",
-        )
-    )
-    all_future_requests = future_result.scalars().all()
-
-    # Group future requests by employee, filtered to after their latest ledger month
-    future_days_by_emp: dict[UUID, int] = {}
-    for emp_id, data in by_employee.items():
-        casual_row = data["casual"]
-        if not casual_row:
-            future_days_by_emp[emp_id] = 0
-            continue
-
-        last_ledger_day = date(
-            casual_row.year,
-            casual_row.month,
-            monthrange(casual_row.year, casual_row.month)[1],
-        )
-        emp_future = [
-            r for r in all_future_requests
-            if r.employee_id == emp_id and r.from_date > last_ledger_day
-        ]
-        if not emp_future:
-            future_days_by_emp[emp_id] = 0
-            continue
-
-        org_id = emp_future[0].organization_id
-        min_date = min(r.from_date for r in emp_future)
-        max_date = max(r.to_date for r in emp_future)
-        holiday_result = await db.execute(
-            select(Holiday.holiday_date).where(
-                Holiday.organization_id == org_id,
-                Holiday.holiday_date >= min_date,
-                Holiday.holiday_date <= max_date,
-            )
-        )
-        holiday_dates = {row for row in holiday_result.scalars().all()}
-
-        days = 0
-        for req in emp_future:
-            current = req.from_date
-            while current <= req.to_date:
-                if not _is_weekend(current) and current not in holiday_dates:
-                    days += 1
-                current += timedelta(days=1)
-        future_days_by_emp[emp_id] = days
-
-    # ── 3. Build output with virtual balance ──────────────────────────
     output = []
-    for emp_id, data in by_employee.items():
-        casual = data["casual"]
-        comp = data["comp_off"]
-        future_days = future_days_by_emp.get(emp_id, 0)
-        casual_balance = float(casual.closing_balance or 0) - future_days if casual else 0.0
+    for emp in employees:
+        balances = await compute_realtime_balance(db, emp.id)
         output.append({
-            "employee_name": data["name"],
-            "casual_balance": casual_balance,
-            "casual_used": float(casual.used) if casual else 0.0,
-            "comp_off_balance": float(comp.closing_balance or 0) if comp else 0.0,
-            "comp_off_used": float(comp.used) if comp else 0.0,
+            "employee_id": str(emp.id),
+            "employee_name": emp.full_name or str(emp.id),
+            **balances,
         })
     return output

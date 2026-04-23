@@ -13,10 +13,11 @@
 #   comp_off     → credits +1 to comp_off balance (employee earned a day off)
 
 # Submission-time validation rules (enforced in create_request):
-#   1. Leave cannot be taken on a weekend (Saturday / Sunday).
+#   1. Leave date range may span weekends — only working days are counted/deducted.
 #   2. Leave cannot be taken on a company holiday.
 #   3. Leave cannot overlap an already-approved WFH request on the same dates.
 #   4. Comp-off date must be a weekend (Sat/Sun) or a company holiday.
+#   5. No two requests (any type) can overlap the same date (pending or approved).
 
 # Rejection has zero side-effects on any balance or session.
 # """
@@ -87,6 +88,36 @@
 # # SUBMISSION VALIDATION RULES
 # # ─────────────────────────────────────────────────────────────
 
+# async def _validate_no_overlap(
+#     db: AsyncSession,
+#     employee: Employee,
+#     body: RequestCreate,
+# ) -> None:
+#     """
+#     Reject if the employee already has any request (pending or approved)
+#     overlapping the requested date range — regardless of request type.
+
+#     This enforces the rule: one request per day maximum.
+#     """
+#     result = await db.execute(
+#         select(LeaveWFHRequest).where(
+#             LeaveWFHRequest.employee_id == employee.id,
+#             LeaveWFHRequest.status.in_(["pending", "approved"]),
+#             LeaveWFHRequest.from_date <= body.to_date,
+#             LeaveWFHRequest.to_date >= body.from_date,
+#         )
+#     )
+#     conflict = result.scalars().first()
+#     if conflict:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail=(
+#                 f"You already have a {conflict.request_type} request ({conflict.status}) "
+#                 f"overlapping {body.from_date} – {body.to_date}."
+#             ),
+#         )
+
+
 # async def _validate_leave_request(
 #     db: AsyncSession,
 #     employee: Employee,
@@ -96,25 +127,13 @@
 #     Enforce all business rules for leave requests at submission time.
 
 #     Rules checked:
-#       1. No leave on weekends (Saturday / Sunday).
+#       1. Weekends inside the range are silently ignored — only working days
+#          are counted at approval time. A Friday–Monday request is allowed
+#          and deducts 2 days (Fri + Mon).
 #       2. No leave on a company holiday (it is already a day off).
 #       3. No leave on a date where an approved WFH request already exists.
 #     """
-#     all_dates = _date_range(body.from_date, body.to_date)
-
-#     # Rule 1 — no weekends
-#     weekend_dates = [d for d in all_dates if _is_weekend(d)]
-#     if weekend_dates:
-#         raise HTTPException(
-#             status_code=status.HTTP_400_BAD_REQUEST,
-#             detail=(
-#                 f"Leave cannot be taken on weekends. "
-#                 f"Weekend dates in your range: "
-#                 f"{', '.join(str(d) for d in weekend_dates)}."
-#             ),
-#         )
-
-#     # Rule 2 — no leave on a holiday
+#     # Rule 1 — holidays only (weekends allowed in range, stripped at approval)
 #     holiday_dates = await _get_holiday_dates(
 #         db, employee.organization_id, body.from_date, body.to_date
 #     )
@@ -128,7 +147,7 @@
 #             ),
 #         )
 
-#     # Rule 3 — no leave where WFH is already approved
+#     # Rule 2 — no leave where WFH is already approved
 #     wfh_result = await db.execute(
 #         select(LeaveWFHRequest).where(
 #             LeaveWFHRequest.employee_id == employee.id,
@@ -262,78 +281,18 @@
 #     req: LeaveWFHRequest,
 # ) -> None:
 #     """
-#     Deduct the number of actual working days in the leave range.
+#     Leave approval does NOT touch the ledger.
 
-#     Working days = all dates in [from_date, to_date] that are NOT
-#     weekends and NOT company holidays (no sandwich policy).
+#     The balance is computed virtually at read-time by balance_service:
+#       virtual_balance = latest_ledger_closing - future_approved_leave_days
 
-#     Priority chain for deduction:
-#       Priority 1 — comp_off balance > 0  → deduct from comp_off.
-#       Priority 2 — comp_off = 0          → deduct from casual (may go negative).
+#     The rollover job picks up approved leave requests at month-end and
+#     writes the correct `used` value into the new month's ledger row.
+
+#     This function is kept as a no-op so the call-site in approve_request
+#     remains unchanged and all other request types are unaffected.
 #     """
-#     all_dates = _date_range(req.from_date, req.to_date)
-#     holiday_dates = await _get_holiday_dates(
-#         db, req.organization_id, req.from_date, req.to_date
-#     )
-#     days = len(_working_days(all_dates, holiday_dates))
-
-#     if days == 0:
-#         # Entire range is weekends/holidays — nothing to deduct.
-#         return
-
-#     comp_off_row = await _get_balance_or_none(
-#         db, req.employee_id, "comp_off", req.from_date
-#     )
-#     if comp_off_row is None:
-#         # Rollover may not have run yet for this month — look back at the
-#         # most recent comp_off row across any month.
-#         result = await db.execute(
-#             select(EmployeeLeaveBalance)
-#             .where(
-#                 EmployeeLeaveBalance.employee_id == req.employee_id,
-#                 EmployeeLeaveBalance.leave_type == "comp_off",
-#             )
-#             .order_by(
-#                 EmployeeLeaveBalance.year.desc(),
-#                 EmployeeLeaveBalance.month.desc(),
-#             )
-#             .limit(1)
-#         )
-#         comp_off_row = result.scalars().first()
-#     comp_off_balance = float(comp_off_row.closing_balance or 0) if comp_off_row else 0.0
-
-#     if comp_off_balance > 0:
-#         # ── Priority 1: spend comp_off ──────────────────────────────
-#         comp_off_row.used = float(comp_off_row.used) + days
-#         _recalc_closing(comp_off_row)
-#         # casual balance is NOT touched
-
-#     else:
-#         # ── Priority 2 & 3: spend casual (allow negative) ──────────
-#         casual_row = await _get_balance_or_none(
-#             db, req.employee_id, "casual", req.from_date
-#         )
-
-#         if casual_row is None:
-#             # No balance row for this month yet (rollover job hasn't run).
-#             # Create one on the fly with opening = 0, so the debt is visible.
-#             casual_row = EmployeeLeaveBalance(
-#                 employee_id=req.employee_id,
-#                 leave_type="casual",
-#                 year=req.from_date.year,
-#                 month=req.from_date.month,
-#                 opening_balance=0,
-#                 accrued=0,
-#                 used=0,
-#                 adjusted=0,
-#                 closing_balance=0,
-#             )
-#             db.add(casual_row)
-#             await db.flush()  # get the PK before mutating
-
-#         casual_row.used = float(casual_row.used) + days
-#         _recalc_closing(casual_row)
-#         # closing_balance may now be negative — that is intentional
+#     pass
 
 
 # # ─────────────────────────────────────────────────────────────
@@ -349,18 +308,24 @@
 #     Create a new pending request for the employee.
 
 #     Runs all submission-time validation rules before saving:
-#       - leave     : no weekends, no holidays, no overlap with approved WFH
-#       - comp_off  : date must be a weekend or company holiday
-#       - missing_time: links the attendance session for the date
+#       - leave        : no holidays, no overlap with approved WFH, no duplicate dates.
+#                        Weekends inside the range are allowed — only working days
+#                        are counted at approval time (e.g. Fri–Mon = 2 days).
+#       - wfh          : no duplicate dates.
+#       - comp_off     : date must be a weekend or company holiday, no duplicate dates.
+#       - missing_time : links the attendance session for the date.
 #     """
-#     # —— Submission-time rule enforcement ———————————————————————————
+#     # —— Rule: one request per day (all types) ————————————————————————
+#     await _validate_no_overlap(db, employee, body)
+
+#     # —— Per-type submission rules ————————————————————————————————————
 #     if body.request_type == "leave":
 #         await _validate_leave_request(db, employee, body)
 
 #     elif body.request_type == "comp_off":
 #         await _validate_comp_off_request(db, employee, body)
 
-#     # —— missing_time: link the attendance session —————————————————————
+#     # —— missing_time: link the attendance session ————————————————————
 #     linked_session_id = None
 
 #     if body.request_type == "missing_time":
@@ -422,12 +387,15 @@
 #     db: AsyncSession,
 #     request_id,
 #     admin: Employee,
-# ) -> RequestResponse:
+# ) -> RequestListResponse:
 #     """
 #     Approve a pending request and apply its side-effects.
 
 #     Raises 400 if the request is not in 'pending' status.
 #     See module docstring for per-type side-effects.
+
+#     Returns RequestListResponse (includes employee name) so the admin
+#     dashboard updates the row in place without a stale name.
 #     """
 #     req = await _get_or_404(db, request_id)
 
@@ -517,17 +485,16 @@
 #     req.reviewed_by = admin.id
 #     req.reviewed_at = datetime.now(timezone.utc)
 
-#     # request_service.py — approve_request, replace the last 3 lines
-
 #     await db.commit()
 #     await db.refresh(req)
 
-#     # Fetch the employee to include name in response (prevents blank name in UI)
+#     # Fetch the employee to include name in response so the admin dashboard
+#     # does not show a blank name after approving without a page refresh.
 #     emp_result = await db.execute(
 #         select(Employee).where(Employee.id == req.employee_id)
 #     )
 #     employee = emp_result.scalars().first()
-#     return _to_list_response(req, employee)   # ✅ includes employee_name
+#     return _to_list_response(req, employee)
 
 
 # async def reject_request(
@@ -585,34 +552,55 @@
 
 #     await db.delete(req)
 #     await db.commit()
-
-
-# app/services/request_service.py
+    
+    
+    
+    
+    
+    
+    
+    
+    
 """
 app/services/request_service.py — Leave/WFH Request Business Logic
 ==================================================================
 Handles the full lifecycle of employee requests: create, list,
 approve, reject, and cancel.
 
-Request types and their approval side-effects:
-  leave        → deducts working days only (skips weekends + holidays — no sandwich policy)
-                 uses comp_off balance first, then casual; casual can go negative
-  wfh          → marks attendance session work_mode = 'wfh' for each day
-  missing_time → fills in checkout time on the linked session
-  comp_off     → credits +1 to comp_off balance (employee earned a day off)
+Request types and their approval side-effects
+─────────────────────────────────────────────
+  leave        → No ledger write on approval. Balance is computed virtually
+                 at read-time by balance_service.compute_realtime_balance(),
+                 which spans all months including future ones. The rollover
+                 job later locks in the used days in the monthly ledger row.
 
-Submission-time validation rules (enforced in create_request):
-  1. Leave date range may span weekends — only working days are counted/deducted.
-  2. Leave cannot be taken on a company holiday.
-  3. Leave cannot overlap an already-approved WFH request on the same dates.
-  4. Comp-off date must be a weekend (Sat/Sun) or a company holiday.
-  5. No two requests (any type) can overlap the same date (pending or approved).
+  wfh          → Marks attendance session work_mode = 'wfh' for each day.
+                 No balance impact.
+
+  missing_time → Fills in the missing checkout time on the linked session.
+                 Recalculates total_hours. No balance impact.
+
+  comp_off     → Credits +1 to the comp_off ledger row for the request's month
+                 immediately on approval (employee EARNED a day off by working
+                 on a non-working day).
+
+Submission-time validation rules (enforced in create_request)
+─────────────────────────────────────────────────────────────
+  1. No two requests (any type) may overlap the same calendar date
+     (whether pending or already approved).
+  2. Leave ranges may span weekends — weekends are stripped at approval
+     time. A Friday–Monday request deducts 2 days (Fri + Mon).
+  3. Leave cannot include a company holiday date.
+  4. Leave cannot overlap an already-approved WFH request.
+  5. Comp-off date must be a Saturday, Sunday, or company holiday.
+  6. missing_time requires an existing attendance session for that date.
 
 Rejection has zero side-effects on any balance or session.
+Cancellation is only allowed while status = "pending".
 """
+
 from datetime import date, datetime, timezone, timedelta
 from typing import List, Set
-from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -632,7 +620,7 @@ from app.schemas.request_Emp import RequestCreate, RequestListResponse, RequestR
 
 def _date_range(from_date: date, to_date: date) -> List[date]:
     """Return every calendar date from from_date to to_date inclusive."""
-    days = []
+    days: List[date] = []
     current = from_date
     while current <= to_date:
         days.append(current)
@@ -652,8 +640,7 @@ async def _get_holiday_dates(
     to_date: date,
 ) -> Set[date]:
     """
-    Return the set of holiday dates for the organization that fall
-    within [from_date, to_date].
+    Return the set of holiday dates for the organisation within [from_date, to_date].
     """
     result = await db.execute(
         select(Holiday.holiday_date).where(
@@ -666,15 +653,12 @@ async def _get_holiday_dates(
 
 
 def _working_days(all_dates: List[date], holiday_dates: Set[date]) -> List[date]:
-    """
-    Filter a list of dates down to actual working days only.
-    Excludes weekends and company holidays (no sandwich policy).
-    """
+    """Filter a list of dates to actual working days (no weekends, no holidays)."""
     return [d for d in all_dates if not _is_weekend(d) and d not in holiday_dates]
 
 
 # ─────────────────────────────────────────────────────────────
-# SUBMISSION VALIDATION RULES
+# SUBMISSION VALIDATION
 # ─────────────────────────────────────────────────────────────
 
 async def _validate_no_overlap(
@@ -683,10 +667,10 @@ async def _validate_no_overlap(
     body: RequestCreate,
 ) -> None:
     """
-    Reject if the employee already has any request (pending or approved)
-    overlapping the requested date range — regardless of request type.
+    Raise 400 if the employee already has any request (pending or approved)
+    whose date range overlaps the new request's range.
 
-    This enforces the rule: one request per day maximum.
+    Enforces the rule: one request per calendar day, across all request types.
     """
     result = await db.execute(
         select(LeaveWFHRequest).where(
@@ -701,8 +685,9 @@ async def _validate_no_overlap(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"You already have a {conflict.request_type} request ({conflict.status}) "
-                f"overlapping {body.from_date} – {body.to_date}."
+                f"You already have a {conflict.request_type} request "
+                f"({conflict.status}) overlapping "
+                f"{body.from_date} – {body.to_date}."
             ),
         )
 
@@ -713,16 +698,12 @@ async def _validate_leave_request(
     body: RequestCreate,
 ) -> None:
     """
-    Enforce all business rules for leave requests at submission time.
-
-    Rules checked:
-      1. Weekends inside the range are silently ignored — only working days
-         are counted at approval time. A Friday–Monday request is allowed
-         and deducts 2 days (Fri + Mon).
-      2. No leave on a company holiday (it is already a day off).
-      3. No leave on a date where an approved WFH request already exists.
+    Enforce leave-specific submission rules:
+      1. No company holidays inside the requested range.
+      2. No overlap with an already-approved WFH request.
+    Weekends are NOT rejected here — they are silently skipped at approval time.
     """
-    # Rule 1 — holidays only (weekends allowed in range, stripped at approval)
+    # Rule 1 — no holidays in the range
     holiday_dates = await _get_holiday_dates(
         db, employee.organization_id, body.from_date, body.to_date
     )
@@ -736,7 +717,7 @@ async def _validate_leave_request(
             ),
         )
 
-    # Rule 2 — no leave where WFH is already approved
+    # Rule 2 — no overlap with approved WFH
     wfh_result = await db.execute(
         select(LeaveWFHRequest).where(
             LeaveWFHRequest.employee_id == employee.id,
@@ -759,21 +740,17 @@ async def _validate_comp_off_request(
     body: RequestCreate,
 ) -> None:
     """
-    Enforce business rules for comp-off requests at submission time.
-
-    Rule: The date must be a weekend (Saturday/Sunday) or a company holiday.
-    Comp-off is earned by working on a non-working day.
+    Comp-off can only be claimed for working on a weekend or company holiday.
+    Raise 400 if the date is a regular working day.
     """
     d = body.from_date  # comp_off is always a single day
 
     if _is_weekend(d):
-        return  # weekend — valid
+        return  # valid — worked on weekend
 
-    holiday_dates = await _get_holiday_dates(
-        db, employee.organization_id, d, d
-    )
+    holiday_dates = await _get_holiday_dates(db, employee.organization_id, d, d)
     if d in holiday_dates:
-        return  # holiday — valid
+        return  # valid — worked on a company holiday
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -789,12 +766,12 @@ async def _validate_comp_off_request(
 # ─────────────────────────────────────────────────────────────
 
 def _to_response(req: LeaveWFHRequest) -> RequestResponse:
-    """Convert a LeaveWFHRequest ORM object to a RequestResponse schema."""
+    """Convert a LeaveWFHRequest ORM row to a RequestResponse schema."""
     return RequestResponse.model_validate(req)
 
 
 def _to_list_response(req: LeaveWFHRequest, employee: Employee) -> RequestListResponse:
-    """Convert a (LeaveWFHRequest, Employee) join row to a RequestListResponse schema."""
+    """Convert a (LeaveWFHRequest, Employee) join result to RequestListResponse."""
     return RequestListResponse(
         id=req.id,
         request_type=req.request_type,
@@ -813,7 +790,7 @@ def _to_list_response(req: LeaveWFHRequest, employee: Employee) -> RequestListRe
 
 
 async def _get_or_404(db: AsyncSession, request_id) -> LeaveWFHRequest:
-    """Fetch a request by ID or raise HTTP 404 if not found."""
+    """Fetch a request by ID or raise HTTP 404."""
     result = await db.execute(
         select(LeaveWFHRequest).where(LeaveWFHRequest.id == request_id)
     )
@@ -826,15 +803,19 @@ async def _get_or_404(db: AsyncSession, request_id) -> LeaveWFHRequest:
     return req
 
 
-async def _get_balance_or_none(
+async def _get_or_create_balance_row(
     db: AsyncSession,
     employee_id,
     leave_type: str,
     target_date: date,
-) -> EmployeeLeaveBalance | None:
+) -> EmployeeLeaveBalance:
     """
-    Fetch the leave balance row for (employee, leave_type, year, month).
-    Returns None if the row does not exist — callers decide how to handle that.
+    Fetch the leave-balance ledger row for (employee, leave_type, year, month).
+    If no row exists for that month, look up the most recent prior row and
+    create a new one carrying forward its closing_balance as the opening.
+
+    This handles the case where the rollover job hasn't run yet for the month
+    of a comp_off approval.
     """
     result = await db.execute(
         select(EmployeeLeaveBalance).where(
@@ -844,14 +825,50 @@ async def _get_balance_or_none(
             EmployeeLeaveBalance.month == target_date.month,
         )
     )
-    return result.scalars().first()
+    row = result.scalars().first()
+    if row:
+        return row
+
+    # No row yet — find the latest prior row to carry forward
+    prior_result = await db.execute(
+        select(EmployeeLeaveBalance)
+        .where(
+            EmployeeLeaveBalance.employee_id == employee_id,
+            EmployeeLeaveBalance.leave_type == leave_type,
+        )
+        .order_by(
+            EmployeeLeaveBalance.year.desc(),
+            EmployeeLeaveBalance.month.desc(),
+        )
+        .limit(1)
+    )
+    prior = prior_result.scalars().first()
+    opening = float(prior.closing_balance) if prior else 0.0
+
+    # For casual leave, add the monthly accrual if rollover hasn't run yet
+    accrued = 1.0 if leave_type == "casual" else 0.0
+
+    row = EmployeeLeaveBalance(
+        employee_id=employee_id,
+        leave_type=leave_type,
+        year=target_date.year,
+        month=target_date.month,
+        opening_balance=opening,
+        accrued=accrued,
+        used=0.0,
+        adjusted=0.0,
+        closing_balance=opening + accrued,
+    )
+    db.add(row)
+    await db.flush()
+    return row
 
 
 def _recalc_closing(row: EmployeeLeaveBalance) -> None:
     """
-    Recompute closing_balance in-place after any change to used / accrued / adjusted.
+    Recompute closing_balance in-place.
     Formula: closing = opening + accrued − used + adjusted
-    Closing CAN be negative (debt scenario for casual leave).
+    closing CAN be negative (casual leave debt is allowed).
     """
     row.closing_balance = (
         float(row.opening_balance)
@@ -859,29 +876,6 @@ def _recalc_closing(row: EmployeeLeaveBalance) -> None:
         - float(row.used)
         + float(row.adjusted)
     )
-
-
-# ─────────────────────────────────────────────────────────────
-# LEAVE APPROVAL — PRIORITY CHAIN
-# ─────────────────────────────────────────────────────────────
-
-async def _approve_leave(
-    db: AsyncSession,
-    req: LeaveWFHRequest,
-) -> None:
-    """
-    Leave approval does NOT touch the ledger.
-
-    The balance is computed virtually at read-time by balance_service:
-      virtual_balance = latest_ledger_closing - future_approved_leave_days
-
-    The rollover job picks up approved leave requests at month-end and
-    writes the correct `used` value into the new month's ledger row.
-
-    This function is kept as a no-op so the call-site in approve_request
-    remains unchanged and all other request types are unaffected.
-    """
-    pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -896,27 +890,30 @@ async def create_request(
     """
     Create a new pending request for the employee.
 
-    Runs all submission-time validation rules before saving:
-      - leave        : no holidays, no overlap with approved WFH, no duplicate dates.
-                       Weekends inside the range are allowed — only working days
-                       are counted at approval time (e.g. Fri–Mon = 2 days).
-      - wfh          : no duplicate dates.
-      - comp_off     : date must be a weekend or company holiday, no duplicate dates.
-      - missing_time : links the attendance session for the date.
+    Validation (all types):
+      - No date overlap with any existing pending or approved request.
+
+    Validation (leave):
+      - No company holidays in range.
+      - No overlap with approved WFH.
+
+    Validation (comp_off):
+      - Date must be a weekend or company holiday.
+
+    Validation (missing_time):
+      - An attendance session must exist for the date.
     """
-    # —— Rule: one request per day (all types) ————————————————————————
+    # Rule: one request per day (all types)
     await _validate_no_overlap(db, employee, body)
 
-    # —— Per-type submission rules ————————————————————————————————————
+    # Per-type rules
     if body.request_type == "leave":
         await _validate_leave_request(db, employee, body)
-
     elif body.request_type == "comp_off":
         await _validate_comp_off_request(db, employee, body)
 
-    # —— missing_time: link the attendance session ————————————————————
+    # missing_time: link the attendance session
     linked_session_id = None
-
     if body.request_type == "missing_time":
         result = await db.execute(
             select(AttendanceSession).where(
@@ -980,11 +977,16 @@ async def approve_request(
     """
     Approve a pending request and apply its side-effects.
 
-    Raises 400 if the request is not in 'pending' status.
-    See module docstring for per-type side-effects.
+    leave        → No ledger write. Balance is always computed virtually
+                   by balance_service (real-time, future-month aware).
+                   The deleted/cancelled request is automatically excluded
+                   from the next balance read — no reversal needed.
+    wfh          → Marks attendance sessions work_mode = 'wfh'.
+    missing_time → Corrects the checkout time on the linked session.
+    comp_off     → Credits +1 accrued to the comp_off ledger row immediately.
 
-    Returns RequestListResponse (includes employee name) so the admin
-    dashboard updates the row in place without a stale name.
+    Raises 400 if the request is not currently pending.
+    Returns RequestListResponse (includes employee name for admin dashboard).
     """
     req = await _get_or_404(db, request_id)
 
@@ -994,14 +996,17 @@ async def approve_request(
             detail=f"Request is already {req.status}.",
         )
 
-    # ── Per-type side effects ────────────────────────────────────────
+    # ── Per-type side effects ─────────────────────────────────────────────────
 
     if req.request_type == "leave":
-        # Priority chain: comp_off first → casual → allow negative
-        await _approve_leave(db, req)
+        # No ledger write needed. balance_service.compute_realtime_balance()
+        # reads all approved leave requests (including future months) and
+        # computes the correct balance virtually on every API call.
+        # The rollover job writes the final used days to the ledger at month-end.
+        pass
 
     elif req.request_type == "wfh":
-        # No balance check — unlimited. Just mark sessions.
+        # Mark every day in the range as WFH on the attendance session.
         current = req.from_date
         while current <= req.to_date:
             result = await db.execute(
@@ -1016,7 +1021,6 @@ async def approve_request(
             current += timedelta(days=1)
 
     elif req.request_type == "missing_time":
-        # No balance check — unlimited. Correct the linked session.
         if not req.linked_session_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1046,30 +1050,16 @@ async def approve_request(
         )
 
     elif req.request_type == "comp_off":
-        # No balance check — unlimited submissions.
-        # Approval credits +1 to comp_off balance (earn, not spend).
-        comp_off_row = await _get_balance_or_none(
+        # Approval = employee EARNED a comp-off day.
+        # Credit +1 to the comp_off ledger row for the request's month
+        # immediately so the balance is visible right away.
+        comp_row = await _get_or_create_balance_row(
             db, req.employee_id, "comp_off", req.from_date
         )
-        if comp_off_row is None:
-            comp_off_row = EmployeeLeaveBalance(
-                employee_id=req.employee_id,
-                leave_type="comp_off",
-                year=req.from_date.year,
-                month=req.from_date.month,
-                opening_balance=0,
-                accrued=0,
-                used=0,
-                adjusted=0,
-                closing_balance=0,
-            )
-            db.add(comp_off_row)
-            await db.flush()
+        comp_row.accrued = float(comp_row.accrued) + 1.0
+        _recalc_closing(comp_row)
 
-        comp_off_row.accrued = float(comp_off_row.accrued) + 1
-        _recalc_closing(comp_off_row)
-
-    # ── Stamp the request ────────────────────────────────────────────
+    # ── Stamp the request ─────────────────────────────────────────────────────
     req.status = "approved"
     req.reviewed_by = admin.id
     req.reviewed_at = datetime.now(timezone.utc)
@@ -1077,8 +1067,6 @@ async def approve_request(
     await db.commit()
     await db.refresh(req)
 
-    # Fetch the employee to include name in response so the admin dashboard
-    # does not show a blank name after approving without a page refresh.
     emp_result = await db.execute(
         select(Employee).where(Employee.id == req.employee_id)
     )
@@ -1094,8 +1082,8 @@ async def reject_request(
 ) -> RequestResponse:
     """
     Reject a pending request with an optional note.
-    No balance or session changes are made.
-    Raises 400 if the request is not in 'pending' status.
+    No balance or session changes are made on rejection.
+    Raises 400 if the request is not currently pending.
     """
     req = await _get_or_404(db, request_id)
 
@@ -1105,7 +1093,6 @@ async def reject_request(
             detail=f"Request is already {req.status}.",
         )
 
-    # Rejection has zero side effects on any balance or session.
     req.status = "rejected"
     req.reviewed_by = admin.id
     req.reviewed_at = datetime.now(timezone.utc)
@@ -1123,8 +1110,14 @@ async def cancel_request(
 ) -> None:
     """
     Employee cancels their own pending request (hard delete).
+
+    Because leave approval does NOT touch the ledger, a cancelled approved
+    leave is automatically reflected in the next call to compute_realtime_balance()
+    — no reversal logic is needed; the deleted request simply stops being
+    counted in the virtual balance.
+
     Raises 403 if the request belongs to a different employee.
-    Raises 400 if the request is no longer pending.
+    Raises 400 if the request is no longer in pending status.
     """
     req = await _get_or_404(db, request_id)
 
