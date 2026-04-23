@@ -57,6 +57,7 @@ Option B — Call manually via an admin endpoint for testing:
 from calendar import monthrange
 from datetime import date, timedelta
 from typing import Sequence
+from dateutil.relativedelta import relativedelta  # python-dateutil
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,9 +73,27 @@ from app.models.leave_wfh_request import LeaveWFHRequest
 CASUAL_ACCRUAL_PER_MONTH: float = 1.0   # 1 leave per month
 LEAVE_TYPES_TO_ACCRUE = ["casual"]       # only casual auto-accrues monthly
 ALL_BALANCE_TYPES     = ["casual", "comp_off"]  # rows created for each
+PROBATION_MONTHS: int = 6               # no accrual for first 6 months
 
 
 # ── Core logic ────────────────────────────────────────────────
+
+def _is_in_probation(joined_on: date | None, target_year: int, target_month: int) -> bool:
+    """
+    Returns True if the target month falls within the first 6 months
+    after the employee's join date (probation period).
+
+    Example: joined_on = 2025-01-15
+      Probation covers: Jan, Feb, Mar, Apr, May, Jun 2025
+      First accrual month: Jul 2025
+    """
+    if not joined_on:
+        return False  # no join date → treat as past probation
+    probation_end = joined_on + relativedelta(months=PROBATION_MONTHS)
+    # The target month starts on the 1st
+    target_start = date(target_year, target_month, 1)
+    return target_start < probation_end
+
 
 def _prev_month(year: int, month: int) -> tuple[int, int]:
     """Return (year, month) for the month before the given one."""
@@ -177,7 +196,7 @@ async def _get_approved_leave_days(
     # Priority: spend comp_off first, then casual
     comp_off_used = min(total_days, max(0.0, comp_off_available))  # can't use more than available
     casual_used = total_days - comp_off_used
-    return int(casual_used), int(comp_off_used)
+    return round(casual_used), round(comp_off_used)
 
 
 async def rollover_for_employee(
@@ -185,6 +204,7 @@ async def rollover_for_employee(
     employee_id,
     target_year: int,
     target_month: int,
+    joined_on: date | None = None,
 ) -> None:
     """
     Create the balance rows for (employee_id, target_year, target_month).
@@ -226,7 +246,14 @@ async def rollover_for_employee(
         opening = float(prev_row.closing_balance) if prev_row else 0.0
 
         # ── 3. Accrual + used ──────────────────────────────────────
-        accrued = CASUAL_ACCRUAL_PER_MONTH if leave_type in LEAVE_TYPES_TO_ACCRUE else 0.0
+        # No accrual during probation (first 6 months after joining)
+        in_probation = _is_in_probation(joined_on, target_year, target_month)
+        accrued = (
+            0.0
+            if in_probation
+            else CASUAL_ACCRUAL_PER_MONTH if leave_type in LEAVE_TYPES_TO_ACCRUE
+            else 0.0
+        )
         used = float(casual_used if leave_type == "casual" else comp_off_used)
 
         # ── 4. Build row ───────────────────────────────────────────
@@ -274,12 +301,12 @@ async def run_leave_rollover(
     try:
         # Fetch all active employees
         result = await db.execute(
-            select(Employee).where(Employee.is_active == True)
+            select(Employee).where(Employee.is_active.is_(True))
         )
         employees: Sequence[Employee] = result.scalars().all()
 
         for emp in employees:
-            await rollover_for_employee(db, emp.id, year, month)
+            await rollover_for_employee(db, emp.id, year, month, emp.joined_on)
 
         await db.commit()
 

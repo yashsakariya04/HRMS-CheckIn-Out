@@ -88,19 +88,19 @@ async def create_employee(data, db) -> Employee:
         db.add(department)
         await db.flush()
         
+    today = date.today()
     employee = Employee(
         email=data.email,
         organization_id=organization.id,
         department_id=department.id,
         designation=data.designation,
+        joined_on=today,  # required for probation check in rollover job
     )
     db.add(employee)
     await db.flush()  # get employee.id before creating balance rows
 
-    # Seed leave balance rows for the current month so the new employee
-    # immediately has 1 casual leave available instead of waiting for
-    # the monthly rollover job to run on the 1st.
-    today = date.today()
+    # Seed zero-balance rows for the current month.
+    # New employees are in probation — no accrual for first 6 months.
     initial_balances = [
         EmployeeLeaveBalance(
             employee_id=employee.id,
@@ -108,10 +108,10 @@ async def create_employee(data, db) -> Employee:
             year=today.year,
             month=today.month,
             opening_balance=0.0,
-            accrued=1.0,
+            accrued=0.0,
             used=0.0,
             adjusted=0.0,
-            closing_balance=1.0,
+            closing_balance=0.0,
         ),
         EmployeeLeaveBalance(
             employee_id=employee.id,

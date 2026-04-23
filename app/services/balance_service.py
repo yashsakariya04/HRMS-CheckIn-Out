@@ -9,9 +9,11 @@ from typing import List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.employee import Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.holiday import Holiday
 from app.models.leave_wfh_request import LeaveWFHRequest
+from app.jobs.leave_rollover import _is_in_probation
 
 
 def _is_weekend(d: date) -> bool:
@@ -25,7 +27,7 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
     Logic (mirrors the spreadsheet):
       1. Get the latest ledger row per leave type (last rollover result).
       2. If the current month has no ledger row yet, simulate it:
-           opening = last closing, accrued = +1 for casual
+           opening = last closing, accrued = +1 for casual (0 if in probation)
       3. Count approved leave working days in the current month
          that are NOT yet captured in the ledger's `used` field.
       4. closing = ledger_closing - unapplied_current_month_days
@@ -58,6 +60,14 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
     casual_row = latest.get("casual")
     comp_row = latest.get("comp_off")
 
+    # ── Fetch employee's joined_on for probation check ─────────────────
+    emp_result = await db.execute(
+        select(Employee.joined_on).where(Employee.id == employee_id)
+    )
+    joined_on = emp_result.scalar_one_or_none()
+    in_probation = _is_in_probation(joined_on, cur_year, cur_month)
+    simulated_accrual = 0.0 if in_probation else 1.0
+
     # ── 2. Base closing from ledger (or simulate if no row yet) ───────
     if casual_row and casual_row.year == cur_year and casual_row.month == cur_month:
         # Rollover already ran for this month — ledger is the base
@@ -65,10 +75,10 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
         casual_already_used = float(casual_row.used)
     elif casual_row:
         # Rollover hasn't run yet for this month — simulate opening + accrual
-        casual_base = float(casual_row.closing_balance or 0) + 1.0  # +1 accrual
+        casual_base = float(casual_row.closing_balance or 0) + simulated_accrual
         casual_already_used = 0.0
     else:
-        casual_base = 1.0  # brand new employee: first month accrual
+        casual_base = simulated_accrual  # brand new employee
         casual_already_used = 0.0
 
     if comp_row and comp_row.year == cur_year and comp_row.month == cur_month:
