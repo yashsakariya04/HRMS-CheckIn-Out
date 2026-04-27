@@ -226,4 +226,5 @@ async def google_login(id_token_str: str, db: AsyncSession) -> dict:
     db.add(db_token)
     await db.commit()
 
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}   
+    

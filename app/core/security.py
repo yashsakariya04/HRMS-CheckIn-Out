@@ -151,3 +151,7 @@ def verify_token(token: str, hashed: str) -> bool:
         True if the token matches the hash, False otherwise.
     """
     return hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), hashed)
+
+
+
+
