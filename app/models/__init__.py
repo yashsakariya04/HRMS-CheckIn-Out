@@ -55,3 +55,5 @@ from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.leave_wfh_request import LeaveWFHRequest
 from app.models.holiday import Holiday
 from app.models.audit_log import AuditLog
+from app.models.ai_conversation import AIConversation
+from app.models.ai_audit_log import AIAuditLog
