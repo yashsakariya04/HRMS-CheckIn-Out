@@ -188,6 +188,81 @@ Full interactive documentation is available at `http://localhost:8000/docs` when
 
 ---
 
+## AI Chatbot Architecture (Hybrid Tool Executor)
+
+This project uses a hybrid AI design: the LLM understands user language, but backend code controls all execution.
+
+### Why this design
+
+- Keeps behavior safe and predictable for HR operations.
+- Avoids direct free-form DB actions from LLM output.
+- Centralizes RBAC and action whitelisting.
+- Makes the system easier to extend with new actions.
+
+### End-to-end request flow
+
+1. Frontend sends `POST /api/v1/ai/chat` with a user message.
+2. AI router builds trusted user context and loads server-side conversation history.
+3. Classifier predicts intent (`ACTION`, `SQL`, `CHAT`, `AMBIGUOUS`) and, for action intent, an `action_hint`.
+4. For `ACTION`, `action_handler.handle_action()` looks up the hint in a tool registry.
+5. `execute_tool()` enforces role checks and runs the mapped executor function.
+6. Executor extracts required parameters (UUIDs, dates, payloads), then calls existing service-layer business logic.
+7. Router stores conversation turns and writes audit log metadata.
+8. API returns normalized response:
+   - `response`
+   - `intent`
+   - `action`
+   - `api_call`
+   - `needs_followup`
+
+### Key files in the AI flow
+
+- `app/ai/router.py`
+  - Entry point for `/ai/chat`.
+  - Builds context, calls classifier, routes intents, persists history, logs audit.
+- `app/ai/classifier.py`
+  - LLM classification with Redis cache and fallback model.
+  - Defines all supported `action_hint` values.
+- `app/ai/handlers/action_handler.py`
+  - Thin orchestrator for ACTION flow.
+  - Handles check-in follow-up and dispatches to tool executor.
+- `app/ai/handlers/tool_registry.py`
+  - Declarative `ToolSpec` registry and unified `execute_tool()` pipeline.
+  - Maps each `action_hint` to role + endpoint metadata + executor function.
+- `app/ai/handlers/param_helpers.py`
+  - Shared helpers for LLM parameter extraction, UUID parsing, and role guards.
+
+### Security and control model
+
+- LLM does not directly decide DB operations.
+- ACTION execution is whitelist-only (registered tools only).
+- RBAC enforced before execution (`employee`, `admin`, `superadmin`).
+- Business rules remain in service layer (`app/services/*`).
+- Every action call is auditable through existing AI audit logging path.
+
+### How to add a new AI action
+
+1. Add the new `action_hint` in `app/ai/classifier.py`.
+2. Implement a small executor function in `app/ai/handlers/tool_registry.py`.
+3. Register it in `get_tool_registry()` with:
+   - tool name
+   - `api_call`
+   - `min_role`
+   - executor function
+4. Keep complex validation in service modules, not in classifier prompt.
+5. Test via `/api/v1/ai/chat` and confirm:
+   - correct role behavior
+   - expected endpoint call metadata
+   - clear user response and follow-up behavior
+
+### Current intent behavior
+
+- `ACTION`: Fully routed through tool registry.
+- `CHAT` and `AMBIGUOUS`: Routed to chat handler.
+- `SQL`, `DOCS`, `MULTI_STEP`: Placeholder fallback until later phases.
+
+---
+
 ## Background Jobs
 
 The backend runs four scheduled jobs automatically.

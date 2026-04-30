@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Example: postgresql+asyncpg://user:password@localhost:5432/hrms_db
     DATABASE_URL: str
 
+    # ── Redis ─────────────────────────────────────────────────────────────────
+    REDIS_URL: str = "redis://localhost:6379"
+
     # ── JWT (JSON Web Tokens) — used for authentication ───────────────────────
     # JWT_SECRET_KEY: the secret used to sign access tokens. Keep this private.
     # JWT_ALGORITHM: signing algorithm (HS256 is standard).
@@ -78,6 +81,11 @@ class Settings(BaseSettings):
     #   Example: "http://localhost:5173,https://app.company.com"
     APP_ENV: str = "development"
     CORS_ORIGINS: str = "http://localhost:5173"
+
+    # ── Groq (LLM for AI chat) ────────────────────────────────────────────────
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"        # generation + chat
+    GROQ_FAST_MODEL: str = "llama-3.1-8b-instant"      # classification + param extraction
 
     def get_cors_origins(self) -> list[str]:
         """
