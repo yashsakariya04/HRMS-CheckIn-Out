@@ -12,6 +12,7 @@ deletion is only allowed when two or more tasks exist on the session.
 Endpoints:
   GET    /api/v1/tasks/today  — List all tasks logged today
   POST   /api/v1/tasks        — Add a task to today's session (anytime)
+  PUT    /api/v1/tasks/{id}   — Edit an existing task
   DELETE /api/v1/tasks/{id}   — Delete a task (only if 2+ tasks exist on the session)
 """
 
@@ -35,6 +36,13 @@ router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 class TaskCreateRequest(BaseModel):
     """Body for POST /tasks — add a task to today's open session."""
+    project_id: uuid.UUID
+    description: str
+    hours: float
+
+
+class TaskUpdateRequest(BaseModel):
+    """Body for PUT /tasks/{id} — edit an existing task."""
     project_id: uuid.UUID
     description: str
     hours: float
@@ -139,6 +147,49 @@ async def create_task(
         sort_order=existing_count,
     )
     db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    return task
+
+
+@router.put("/{task_id}", response_model=TaskOut)
+async def update_task(
+    task_id: uuid.UUID,
+    body: TaskUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """
+    Edit an existing task.
+
+    Rules:
+      - The task must belong to the current employee
+      - hours must be > 0 and <= 24
+    """
+    if body.hours <= 0 or body.hours > 24:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="hours must be between 0 (exclusive) and 24 (inclusive).",
+        )
+
+    task_result = await db.execute(
+        select(TaskEntry).where(
+            TaskEntry.id == task_id,
+            TaskEntry.employee_id == current_user.id,
+        )
+    )
+    task = task_result.scalars().first()
+
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found or you do not have permission to edit it.",
+        )
+
+    task.project_id = body.project_id
+    task.description = body.description
+    task.hours_logged = body.hours
+
     await db.commit()
     await db.refresh(task)
     return task
