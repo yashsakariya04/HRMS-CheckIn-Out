@@ -23,6 +23,7 @@ from app.models.employee import Department, Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.organization import Organization
 from app.jobs.leave_rollover import CASUAL_ACCRUAL_PER_MONTH, _is_in_probation
+from app.core.security import hash_password
 
 async def list_employees(db) -> list:
     result = await db.execute(
@@ -92,6 +93,7 @@ async def create_employee(data, db) -> Employee:
     today = date.today()
     employee = Employee(
         email=data.email,
+        hashed_password=hash_password(data.password),
         organization_id=organization.id,
         department_id=department.id,
         designation=data.designation,

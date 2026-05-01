@@ -21,8 +21,9 @@ from pydantic import BaseModel, EmailStr
 
 
 class LoginRequest(BaseModel):
-    """Body for POST /auth/login — email-only, no password."""
-    email: EmailStr  # Validated as a proper email address format
+    """Body for POST /auth/login — email + password."""
+    email: EmailStr
+    password: str
 
 
 class RefreshRequest(BaseModel):

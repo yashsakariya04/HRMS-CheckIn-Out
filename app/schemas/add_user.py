@@ -23,16 +23,12 @@ from pydantic import BaseModel, EmailStr
 class CreateEmployeeRequest(BaseModel):
     """
     Body for POST /employee/add — admin registers a new employee.
-
-    The employee is created with just their email, department, and designation.
-    Their name and photo are auto-filled from Google on their first login.
-    joined_on is required so existing employees are not incorrectly placed
-    in probation when added to the system retroactively.
     """
-    email: EmailStr           # Must be a valid email — this is their login identity
-    department_name: str      # Department name typed manually (e.g. "Full Stack", "HR")
-    designation: str          # Job title (e.g. "Software Engineer")
-    joined_on: date           # Actual joining date — used to determine probation status
+    email: EmailStr
+    password: str             # Plain text — will be hashed before storing
+    department_name: str
+    designation: str
+    joined_on: date
 
 
 class EmployeeListItem(BaseModel):

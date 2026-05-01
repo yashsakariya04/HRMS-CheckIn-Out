@@ -31,36 +31,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.security import (
     create_access_token, create_refresh_token, hash_token, verify_token,
+    verify_password,
 )
 from app.models.employee import Employee
 from app.models.refresh_token import RefreshToken
 
 
-async def login(email: str, db: AsyncSession) -> dict:
+async def login(email: str, password: str, db: AsyncSession) -> dict:
     """
-    Email-only login — no password required.
+    Email + password login.
 
-    Looks up the employee by email, verifies they are active,
-    updates their last_login_at timestamp, and issues tokens.
-
-    Args:
-        email: The employee's email address.
-        db:    Async database session.
-
-    Returns:
-        Dict with access_token, refresh_token, and token_type.
-
-    Raises:
-        404 — Employee not found.
-        403 — Employee account is inactive (deactivated by admin).
+    Looks up the employee by email, verifies the password against the
+    stored Argon2id hash, and issues tokens on success.
     """
     result = await db.execute(select(Employee).where(Employee.email == email))
     user = result.scalars().first()
 
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="User is inactive")
+    if not user.hashed_password or not verify_password(password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
     # Set joined_on on first login if not already set
     if user.joined_on is None:

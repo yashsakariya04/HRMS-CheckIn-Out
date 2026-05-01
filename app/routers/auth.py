@@ -25,11 +25,9 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 @router.post("/login", response_model=TokenResponse)
 async def login_route(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     """
-    Email-only login — no password required.
-    Looks up the employee by email and issues tokens if they are active.
-    Used for development/testing. Production uses google-login.
+    Email + password login. Returns access and refresh tokens.
     """
-    return await login(data.email, db)
+    return await login(data.email, data.password, db)
 
 
 @router.post("/refresh", response_model=TokenResponse)
