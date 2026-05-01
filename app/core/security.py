@@ -24,11 +24,19 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
+from passlib.context import CryptContext
 
 from app.core.config import settings
 
-# Retained as a placeholder in case password-based auth is added later.
-pwd_context = None
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+
+def hash_password(plain: str) -> str:
+    return pwd_context.hash(plain)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
 
 
 def create_access_token(data: dict) -> str:

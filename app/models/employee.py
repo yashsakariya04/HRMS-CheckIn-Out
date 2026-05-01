@@ -124,6 +124,9 @@ class Employee(Base):
         String(320), unique=True, index=True, nullable=False,
     )
 
+    # Argon2id hash of the password set by admin at employee creation time
+    hashed_password: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Display name — auto-filled from Google on first login, editable after
     full_name: Mapped[str] = mapped_column(String(255), nullable=True)
 
