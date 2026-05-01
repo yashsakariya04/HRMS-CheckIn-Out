@@ -36,22 +36,6 @@ async def get_my_leaves(
     return await leave_service_Emp.get_my_leaves(db, current_user.id)
 
 
-@router.get("/{employee_id}", response_model=LeavesResponse)
-async def get_employee_leaves(
-    employee_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    """
-    Admin only: return any employee's approved leave history.
-    Same shape as /leaves/me but for a specified employee.
-    """
-    result = await leave_service_Emp.get_my_leaves(db, employee_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Employee not found")
-    return result
-
-
 @router.get("/summary")
 async def leave_summary(
     db: AsyncSession = Depends(get_db),
@@ -66,6 +50,22 @@ async def leave_summary(
     rollover job.
     """
     return await leave_service.get_leave_summary(db)
+
+
+@router.get("/{employee_id}", response_model=LeavesResponse)
+async def get_employee_leaves(
+    employee_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    """
+    Admin only: return any employee's approved leave history.
+    Same shape as /leaves/me but for a specified employee.
+    """
+    result = await leave_service_Emp.get_my_leaves(db, employee_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return result
 
 
 
