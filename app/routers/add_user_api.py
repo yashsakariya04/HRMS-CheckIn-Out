@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies.auth import get_current_user, require_admin
 from app.dependencies.database import get_db
 from app.jobs.leave_rollover import run_leave_rollover
-from app.schemas.add_user import CreateEmployeeRequest, EmployeeListItem, UpdateProfileRequest
-from app.services.add_user_service import create_employee, delete_employee, list_employees, update_profile
+from app.schemas.add_user import ChangePasswordRequest, CreateEmployeeRequest, EmployeeListItem, UpdateProfileRequest
+from app.services.add_user_service import change_password, create_employee, delete_employee, list_employees, update_profile
 
 router = APIRouter(prefix="/employee", tags=["Employee"])
 
@@ -50,6 +50,19 @@ async def add_employee(
     Returns 400 if an employee with the same email already exists.
     """
     return await create_employee(data, db)
+
+
+@router.put("/change-password")
+async def change_password_route(
+    data: ChangePasswordRequest,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Any authenticated employee can change their own password.
+    Requires current password for verification before updating.
+    """
+    return await change_password(user, data, db)
 
 
 @router.put("/update-profile")

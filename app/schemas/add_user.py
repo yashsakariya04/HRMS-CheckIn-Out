@@ -46,6 +46,12 @@ class EmployeeListItem(BaseModel):
     is_active: bool
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+
 class UpdateProfileRequest(BaseModel):
     """
     Body for PUT /employee/update-profile — employee updates their own profile.
