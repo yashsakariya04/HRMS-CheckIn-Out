@@ -23,7 +23,7 @@ from app.models.employee import Department, Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.organization import Organization
 from app.jobs.leave_rollover import CASUAL_ACCRUAL_PER_MONTH, _is_in_probation
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 
 async def list_employees(db) -> list:
     result = await db.execute(
@@ -136,6 +136,16 @@ async def create_employee(data, db) -> Employee:
     await db.commit()
     await db.refresh(employee)
     return employee
+
+
+async def change_password(user: Employee, data, db) -> dict:
+    if data.new_password != data.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+    if not user.hashed_password or not verify_password(data.current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect current password")
+    user.hashed_password = hash_password(data.new_password)
+    await db.commit()
+    return {"message": "Password updated successfully"}
 
 
 async def update_profile(user: Employee, data, db) -> dict:
