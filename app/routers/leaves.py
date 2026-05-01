@@ -2,11 +2,14 @@
 app/routers/leaves.py — Employee Leave History & Admin Summary Endpoints
 ========================================================================
 
-GET /api/v1/leaves/me       — Employee views their own approved leave history.
-GET /api/v1/leaves/summary  — Admin views per-employee real-time balance summary.
+GET /api/v1/leaves/me              — Employee views their own approved leave history.
+GET /api/v1/leaves/{employee_id}   — Admin views any employee's approved leave history.
+GET /api/v1/leaves/summary         — Admin views per-employee real-time balance summary.
 """
 
-from fastapi import APIRouter, Depends
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import get_current_user, require_admin
@@ -31,6 +34,22 @@ async def get_my_leaves(
       previous_months — per-month totals + dates for all prior months.
     """
     return await leave_service_Emp.get_my_leaves(db, current_user.id)
+
+
+@router.get("/{employee_id}", response_model=LeavesResponse)
+async def get_employee_leaves(
+    employee_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    """
+    Admin only: return any employee's approved leave history.
+    Same shape as /leaves/me but for a specified employee.
+    """
+    result = await leave_service_Emp.get_my_leaves(db, employee_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return result
 
 
 @router.get("/summary")

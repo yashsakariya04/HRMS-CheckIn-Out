@@ -46,6 +46,7 @@ from app.routers import (
 )
 from app.routers import add_holiday_api, add_project_api, add_user_api
 from app.routers import superadmin as superadmin_router
+from app.ai import router as ai_router
 
 
 @asynccontextmanager
@@ -99,6 +100,7 @@ app.include_router(add_user_api.router,      prefix="/api/v1")  # Admin: add/rem
 app.include_router(add_project_api.router,   prefix="/api/v1")  # Admin: manage projects
 app.include_router(add_holiday_api.router,   prefix="/api/v1")  # Admin: manage holidays
 app.include_router(superadmin_router.router, prefix="/api/v1")  # Superadmin: role management
+app.include_router(ai_router.router,          prefix="/api/v1")  # AI chat
 
 
 @app.get("/health", tags=["Health"])

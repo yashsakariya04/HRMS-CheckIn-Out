@@ -27,6 +27,9 @@ import uuid
 from datetime import date, datetime
 from typing import List, TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from app.models.task_entry import TaskEntry
+
 from sqlalchemy import (
     Boolean, CheckConstraint, Date, ForeignKey,
     Index, Numeric, String, TIMESTAMP, text, UniqueConstraint,
