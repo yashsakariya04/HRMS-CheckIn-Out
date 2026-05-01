@@ -233,7 +233,9 @@ async def rollover_for_employee(
         if existing_result.scalars().first():
             continue
 
-        # ── 2. Opening = previous month's closing ──────────────────
+        # ── 2. Opening = previous month's real closing ─────────────
+        # Re-compute prev month's closing using actual approved leave days
+        # in case the prev row was created before those leaves were taken.
         prev_result = await db.execute(
             select(EmployeeLeaveBalance).where(
                 EmployeeLeaveBalance.employee_id == employee_id,
@@ -243,7 +245,23 @@ async def rollover_for_employee(
             )
         )
         prev_row = prev_result.scalars().first()
-        opening = float(prev_row.closing_balance) if prev_row else 0.0
+        if prev_row:
+            prev_casual_used, prev_comp_used = await _get_approved_leave_days(
+                db, employee_id, prev_year, prev_month
+            )
+            prev_used = prev_casual_used if leave_type == "casual" else prev_comp_used
+            opening = (
+                float(prev_row.opening_balance)
+                + float(prev_row.accrued)
+                - prev_used
+                + float(prev_row.adjusted)
+            )
+            # Also update the stale prev row so it reflects reality
+            if prev_row.used != prev_used:
+                prev_row.used = prev_used
+                prev_row.closing_balance = opening
+        else:
+            opening = 0.0
 
         # ── 3. Accrual + used ──────────────────────────────────────
         # No accrual during probation (first 6 months after joining)
@@ -269,8 +287,7 @@ async def rollover_for_employee(
             adjusted=0.0,
             closing_balance=closing,
         ))
-
-    await db.flush()
+        await db.flush()  # flush immediately so next month's query sees this row
 
 
 async def run_leave_rollover(
