@@ -81,12 +81,16 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
         casual_base = simulated_accrual  # brand new employee
         casual_already_used = 0.0
 
+    # comp_off base from ledger (same whether rollover ran this month or not)
     if comp_row and comp_row.year == cur_year and comp_row.month == cur_month:
-        comp_balance = float(comp_row.closing_balance or 0)
+        comp_base = float(comp_row.closing_balance or 0)
+        comp_already_used = float(comp_row.used)
     elif comp_row:
-        comp_balance = float(comp_row.closing_balance or 0)
+        comp_base = float(comp_row.closing_balance or 0)
+        comp_already_used = 0.0
     else:
-        comp_balance = 0.0
+        comp_base = 0.0
+        comp_already_used = 0.0
 
     # ── 3. Count approved leave days in current month not yet in ledger ─
     first_day = date(cur_year, cur_month, 1)
@@ -123,15 +127,21 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
                     current_month_used += 1
                 current += timedelta(days=1)
 
-    # ── 4. Unapplied = current month approved days minus what ledger already has ─
-    unapplied = current_month_used - casual_already_used
-    casual_balance = casual_base - unapplied
+    # ── 4. Split current month used days: comp_off first, then casual ──
+    # Mirror the same priority logic as _get_approved_leave_days in rollover.
+    # comp_off available = comp_base (already includes earned comp_offs this month)
+    comp_off_available = max(0.0, comp_base)
+    comp_off_unapplied = min(current_month_used, comp_off_available) - comp_already_used
+    casual_unapplied = (current_month_used - min(current_month_used, comp_off_available)) - casual_already_used
+
+    casual_balance = casual_base - casual_unapplied
+    comp_balance = comp_base - comp_off_unapplied
 
     return {
         "casual_balance": casual_balance,
         "casual_used": current_month_used,
         "comp_off_balance": comp_balance,
-        "comp_off_used": float(comp_row.used) if comp_row and comp_row.year == cur_year and comp_row.month == cur_month else 0.0,
+        "comp_off_used": comp_already_used + comp_off_unapplied,
     }
 
 
