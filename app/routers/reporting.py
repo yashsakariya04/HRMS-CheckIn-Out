@@ -42,29 +42,30 @@ async def employee_dropdown(
 @router.get("/{employee_id}", response_model=ReportingResponse)
 async def employee_report(
     employee_id: UUID,
-    whole_month: bool = Query(False),
+    year: int = Query(None),
+    month: int = Query(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
     """
     Admin only: return the attendance report for a specific employee.
-
-    whole_month=False (default) → only current month's sessions
-    whole_month=True            → all sessions ever recorded
-
+    Defaults to the current month if year/month are not provided.
     Response includes average daily hours and a list of attendance records.
     """
-    return await get_employee_report(employee_id, whole_month, db)
+    return await get_employee_report(employee_id, year, month, db)
 
 
 @router.get("/{employee_id}/csv", response_class=StreamingResponse)
 async def employee_report_csv(
     employee_id: UUID,
+    year: int = Query(None),
+    month: int = Query(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
     """
-    Admin only: download the full attendance report for an employee as a CSV file.
+    Admin only: download the attendance report for an employee as a CSV file.
+    Defaults to the current month if year/month are not provided.
     Filename format: report_<employee_name>_<Month_Year>.csv
     """
-    return await get_employee_report_csv(employee_id, db)
+    return await get_employee_report_csv(employee_id, year, month, db)

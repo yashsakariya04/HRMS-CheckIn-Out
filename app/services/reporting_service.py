@@ -16,6 +16,7 @@ month or all historical records.
 
 import csv
 import io
+from calendar import monthrange
 from datetime import date
 from uuid import UUID
 
@@ -77,27 +78,23 @@ async def get_all_employees(db: AsyncSession) -> list[EmployeeDropdownItem]:
 
 
 async def get_employee_report(
-    employee_id: UUID, whole_month: bool, db: AsyncSession
+    employee_id: UUID, year: int | None, month: int | None, db: AsyncSession
 ) -> ReportingResponse:
     today = date.today()
+    target_year = year or today.year
+    target_month = month or today.month
+    month_start = date(target_year, target_month, 1)
+    month_end = date(target_year, target_month, monthrange(target_year, target_month)[1])
 
-    month_result = await db.execute(
+    result = await db.execute(
         select(AttendanceSession).where(
             AttendanceSession.employee_id == employee_id,
-            AttendanceSession.session_date >= today.replace(day=1),
-        )
+            AttendanceSession.session_date.between(month_start, month_end),
+        ).order_by(AttendanceSession.session_date.desc())
     )
-    month_sessions = month_result.scalars().all()
-    hours = [float(s.total_hours) for s in month_sessions if s.total_hours is not None]
-    avg_hours = round(sum(hours) / len(hours), 1) if hours else 0.0
-
-    stmt = select(AttendanceSession).where(AttendanceSession.employee_id == employee_id)
-    if not whole_month:
-        stmt = stmt.where(AttendanceSession.session_date >= today.replace(day=1))
-    stmt = stmt.order_by(AttendanceSession.session_date.desc())
-
-    result = await db.execute(stmt)
     sessions = result.scalars().all()
+    hours = [float(s.total_hours) for s in sessions if s.total_hours is not None]
+    avg_hours = round(sum(hours) / len(hours), 1) if hours else 0.0
 
     if not sessions:
         return ReportingResponse(avg_hours_this_month=avg_hours, records=[])
@@ -128,14 +125,23 @@ async def get_employee_report(
     return ReportingResponse(avg_hours_this_month=avg_hours, records=records)
 
 
-async def get_employee_report_csv(employee_id: UUID, db: AsyncSession) -> StreamingResponse:
+async def get_employee_report_csv(employee_id: UUID, year: int | None, month: int | None, db: AsyncSession) -> StreamingResponse:
+    today = date.today()
+    target_year = year or today.year
+    target_month = month or today.month
+    month_start = date(target_year, target_month, 1)
+    month_end = date(target_year, target_month, monthrange(target_year, target_month)[1])
+
     emp_result = await db.execute(select(Employee).where(Employee.id == employee_id))
     employee = emp_result.scalars().first()
     emp_name = (employee.full_name or str(employee_id)).replace(" ", "_") if employee else str(employee_id)
 
     result = await db.execute(
         select(AttendanceSession)
-        .where(AttendanceSession.employee_id == employee_id)
+        .where(
+            AttendanceSession.employee_id == employee_id,
+            AttendanceSession.session_date.between(month_start, month_end),
+        )
         .order_by(AttendanceSession.session_date.desc())
     )
     sessions = result.scalars().all()
@@ -167,7 +173,7 @@ async def get_employee_report_csv(employee_id: UUID, db: AsyncSession) -> Stream
         ])
 
     output.seek(0)
-    filename = f"report_{emp_name}_{date.today().strftime('%b_%Y')}.csv"
+    filename = f"report_{emp_name}_{month_start.strftime('%b_%Y')}.csv"
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
