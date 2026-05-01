@@ -22,6 +22,7 @@ from sqlalchemy import select
 from app.models.employee import Department, Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.organization import Organization
+from app.jobs.leave_rollover import CASUAL_ACCRUAL_PER_MONTH, _is_in_probation
 
 async def list_employees(db) -> list:
     result = await db.execute(
@@ -94,13 +95,16 @@ async def create_employee(data, db) -> Employee:
         organization_id=organization.id,
         department_id=department.id,
         designation=data.designation,
-        joined_on=today,  # required for probation check in rollover job
+        joined_on=data.joined_on,
     )
     db.add(employee)
     await db.flush()  # get employee.id before creating balance rows
 
-    # Seed zero-balance rows for the current month.
-    # New employees are in probation — no accrual for first 6 months.
+    # Seed balance rows for the current month.
+    # Accrual is only given if the employee is past their 6-month probation
+    # based on their actual joining date, not today's date.
+    in_probation = _is_in_probation(data.joined_on, today.year, today.month)
+    casual_accrual = 0.0 if in_probation else CASUAL_ACCRUAL_PER_MONTH
     initial_balances = [
         EmployeeLeaveBalance(
             employee_id=employee.id,
@@ -108,10 +112,10 @@ async def create_employee(data, db) -> Employee:
             year=today.year,
             month=today.month,
             opening_balance=0.0,
-            accrued=0.0,
+            accrued=casual_accrual,
             used=0.0,
             adjusted=0.0,
-            closing_balance=0.0,
+            closing_balance=casual_accrual,
         ),
         EmployeeLeaveBalance(
             employee_id=employee.id,
