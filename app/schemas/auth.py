@@ -28,17 +28,10 @@ class LoginRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     """Body for POST /auth/refresh and POST /auth/logout."""
-    refresh_token: str  # The long-lived token received at login
+    refresh_token: str
 
 
 class TokenResponse(BaseModel):
-    """
-    Returned after a successful login or token refresh.
-
-    access_token  : Short-lived JWT (15 min). Send in every API request header.
-    refresh_token : Long-lived opaque token (1 year). Use only to get new access tokens.
-    token_type    : Always "bearer" — tells the client how to send the token.
-    """
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -46,4 +39,22 @@ class TokenResponse(BaseModel):
 
 class GoogleLoginRequest(BaseModel):
     """Body for POST /auth/google-login — Google OAuth flow."""
-    id_token: str  # The ID token received from Google after the user signs in
+    id_token: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Body for POST /auth/forgot-password."""
+    email: EmailStr
+
+
+class VerifyOTPRequest(BaseModel):
+    """Body for POST /auth/verify-otp."""
+    email: EmailStr
+    otp: str
+
+
+class ResetPasswordRequest(BaseModel):
+    """Body for POST /auth/reset-password."""
+    reset_token: str
+    new_password: str
+    confirm_password: str

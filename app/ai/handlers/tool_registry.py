@@ -41,6 +41,7 @@ How to add a new ACTION
 from dataclasses import dataclass
 from datetime import date
 from typing import Awaitable, Callable, Literal
+import json
 import uuid
 
 from fastapi import HTTPException
@@ -126,64 +127,112 @@ async def execute_tool(
     return result
 
 
-async def _check_in_initial(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
-    """Start two-turn check-in by asking for task payload."""
-    if context["checked_in_today"]:
-        return {"response": f"You already checked in at {context['check_in_at']}.", "api_call": None, "needs_followup": False}
-    return {
-        "response": "What are you working on today? Please share project, task description, and hours.",
-        "api_call": None,
-        "needs_followup": True,
-    }
-
-
-async def checkin_followup(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
-    """Complete two-turn check-in after collecting project/task/hours."""
+async def _attempt_checkin(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
+    """Try to extract project/task/hours and check in. If anything missing, ask naturally."""
+    projects = context.get("active_projects", [])
+    projects_str = json.dumps(projects)
     data = json_from_llm(
         llm_call(
-            """Extract check-in task JSON:
-{"project_id":"uuid","description":"text","hours":4}
-Use active_projects from context for project_id. If missing fields:
-{"error":"what is missing"}""",
+            f"""Extract check-in details from the user message.
+Active projects: {projects_str}
+Match project name to project_id from the list above (fuzzy match is fine).
+Return JSON: {{"project_id":"uuid or null","description":"task text or null","hours":number or null}}
+If a field is not mentioned, set it to null. Never guess.""",
             message,
             context,
         )
     )
-    if "error" in data:
-        return {"response": f"I need more details: {data['error']}", "api_call": None, "needs_followup": True}
 
-    body = CheckInRequest(
-        tasks=[
-            TaskInput(
-                project_id=uuid.UUID(data["project_id"]),
-                description=data["description"],
-                hours=float(data["hours"]),
+    missing = [k for k in ["project_id", "description", "hours"] if not data.get(k)]
+
+    if missing:
+        present = {k: data[k] for k in ["project_id", "description", "hours"] if data.get(k)}
+        ask = json_from_llm(
+            llm_call(
+                f"""The user wants to check in. You have collected: {json.dumps(present)}.
+Missing fields: {missing}.
+Write a single short natural conversational question to ask for the missing info.
+Return JSON: {{"question": "your question here"}}""",
+                message,
+                context,
             )
-        ]
-    )
-    session = await attendance_service.check_in(db, user.id, user.organization_id, body)
-    return {
-        "response": f"Checked you in at {session.check_in_at.strftime('%I:%M %p')} and logged your task.",
-        "api_call": "POST /attendance/check-in",
-        "needs_followup": False,
-    }
+        )
+        question = ask.get("question") or f"Could you also share your {', '.join(missing)}?"
+        # Embed pending tag so action_handler can route the follow-up deterministically
+        return {"response": f"{question} [PENDING:check_in]", "api_call": None, "needs_followup": True, "_partial": present}
+
+    return await _do_checkin(db, user, data)
+
+
+async def _do_checkin(db: AsyncSession, user: Employee, data: dict) -> ToolResult:
+    """Execute the actual check-in service call."""
+    try:
+        body = CheckInRequest(
+            tasks=[
+                TaskInput(
+                    project_id=uuid.UUID(data["project_id"]),
+                    description=data["description"],
+                    hours=float(data["hours"]),
+                )
+            ]
+        )
+        session = await attendance_service.check_in(db, user.id, user.organization_id, body)
+        return {
+            "response": f"✓ Checked you in at {session.check_in_at.strftime('%I:%M %p')} and logged your task.",
+            "api_call": "POST /attendance/check-in",
+            "needs_followup": False,
+        }
+    except ValueError:
+        return {"response": "Invalid hours value. Please provide a valid number.", "api_call": None, "needs_followup": True}
+    except Exception as e:
+        return {"response": f"Check-in failed: {str(e)}", "api_call": None, "needs_followup": True}
+
+
+async def _check_in_initial(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
+    """Entry point for check-in — tries to complete in one turn if all details present."""
+    if context.get("checked_in_today"):
+        return {"response": f"You're already checked in at {context['check_in_at']}.", "api_call": None, "needs_followup": False}
+    return await _attempt_checkin(db, user, message, context)
+
+
+async def checkin_followup(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
+    """Continue multi-turn check-in by merging new info with what was already collected."""
+    if context.get("checked_in_today"):
+        return {"response": f"You're already checked in at {context['check_in_at']}.", "api_call": None, "needs_followup": False}
+    return await _attempt_checkin(db, user, message, context)
 
 
 async def _check_out(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Check out current user from today's open attendance session."""
-    session = await attendance_service.check_out(db, user.id)
-    return {"response": f"Checked you out at {session.check_out_at.strftime('%I:%M %p')}. Total: {session.total_hours}h."}
+    try:
+        if not context.get("checked_in_today"):
+            return {"response": "You're not checked in yet. Please check in first.", "api_call": None, "needs_followup": False}
+        session = await attendance_service.check_out(db, user.id)
+        if not session or not session.check_out_at:
+            return {"response": "Could not check you out. Please try again.", "api_call": None, "needs_followup": False}
+        return {
+            "response": f"✓ Checked you out at {session.check_out_at.strftime('%I:%M %p')}. Total: {round(session.total_hours, 2)}h.",
+            "api_call": "PATCH /attendance/check-out",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": f"Could not check out: {str(e.detail)}", "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Check-out failed: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _view_today_session(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Return a human summary of today's session state."""
-    session = await attendance_service.get_today_session(db, user.id)
-    if not session:
-        return {"response": "No session found for today yet."}
-    if session.check_out_at:
-        return {"response": f"Today's session: checked in at {session.check_in_at.strftime('%I:%M %p')} and checked out at {session.check_out_at.strftime('%I:%M %p')}."}
-    return {"response": f"You're currently checked in since {session.check_in_at.strftime('%I:%M %p')}."}
-
+    try:
+        session = await attendance_service.get_today_session(db, user.id)
+        if not session:
+            return {"response": "No session found for today yet. You haven't checked in.", "api_call": "GET /attendance/today", "needs_followup": False}
+        if session.check_out_at:
+            duration = (session.check_out_at - session.check_in_at).total_seconds() / 3600
+            return {"response": f"📋 Today's session:\n✓ Check-in: {session.check_in_at.strftime('%I:%M %p')}\n✓ Check-out: {session.check_out_at.strftime('%I:%M %p')}\n⏱ Duration: {round(duration, 2)}h", "api_call": "GET /attendance/today", "needs_followup": False}
+        return {"response": f"📋 Current session:\n✓ Checked in at {session.check_in_at.strftime('%I:%M %p')}\n⏱ Still active", "api_call": "GET /attendance/today", "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to get session: {str(e)}", "api_call": None, "needs_followup": False}
 
 async def _view_attendance_month(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Return monthly attendance count for current user."""
@@ -227,30 +276,51 @@ async def _view_tasks_today(db: AsyncSession, user: Employee, message: str, cont
 
 async def _add_task(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Parse task payload and append it to today's session."""
-    data = json_from_llm(
-        llm_call(
-            """Extract JSON for adding task:
-{"project_id":"uuid","description":"text","hours":2.5}
-Use active_projects from context.""",
-            message,
-            context,
+    try:
+        session = await attendance_service.get_today_session(db, user.id)
+        if not session:
+            return {"response": "No session found. Please check in first to add tasks.", "api_call": None, "needs_followup": False}
+        
+        data = json_from_llm(
+            llm_call(
+                """Extract JSON for adding task:
+{"project_id":"uuid or project name","description":"detailed task description","hours":2.5}
+Use active_projects from context for matching.""",
+                message,
+                context,
+            )
         )
-    )
-    session = await attendance_service.get_today_session(db, user.id)
-    if not session:
-        raise HTTPException(status_code=404, detail="No session found for today. Please check in first.")
-    existing_count = len((await db.execute(select(TaskEntry).where(TaskEntry.session_id == session.id))).scalars().all())
-    task = TaskEntry(
-        session_id=session.id,
-        project_id=uuid.UUID(data["project_id"]),
-        employee_id=user.id,
-        description=data["description"],
-        hours_logged=float(data["hours"]),
-        sort_order=existing_count,
-    )
-    db.add(task)
-    await db.commit()
-    return {"response": "Task added to today's session."}
+        
+        # Validate required fields
+        if not data.get("description") or not data.get("hours"):
+            return {"response": "I need both task description and hours worked.", "api_call": None, "needs_followup": True}
+        
+        try:
+            hours = float(data["hours"])
+            if hours <= 0 or hours > 24:
+                return {"response": "Please provide valid hours (0-24 hours per day).", "api_call": None, "needs_followup": True}
+        except (ValueError, TypeError):
+            return {"response": "Hours must be a valid number.", "api_call": None, "needs_followup": True}
+        
+        existing_count = len((await db.execute(select(TaskEntry).where(TaskEntry.session_id == session.id))).scalars().all())
+        task = TaskEntry(
+            session_id=session.id,
+            project_id=uuid.UUID(data["project_id"]),
+            description=data["description"],
+            hours_logged=hours,
+            sort_order=existing_count,
+        )
+        db.add(task)
+        await db.commit()
+        return {
+            "response": f"✓ Task added: '{data['description']}' ({hours}h)",
+            "api_call": "POST /tasks",
+            "needs_followup": False,
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to add task: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _edit_task(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
@@ -296,229 +366,514 @@ async def _delete_task(db: AsyncSession, user: Employee, message: str, context: 
     return {"response": "Task deleted.", "api_call": f"DELETE /tasks/{task_id}"}
 
 
-async def _apply_request(request_type: str, db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
-    """Shared request creator for leave/WFH/comp-off/missing-time."""
-    data = json_from_llm(
-        llm_call(
-            f"""Extract request JSON for type {request_type}.
-Return JSON with from_date,to_date,reason,checkout_time(optional HH:MM only for missing_time).
-Example: {{"from_date":"2026-05-01","to_date":"2026-05-01","reason":"reason","checkout_time":"18:30"}}
-If ambiguous, return {{"error":"..."}}.""",
-            message,
-            context,
+async def _apply_request(request_type: str, db: AsyncSession, user: Employee, message: str, context: dict, history: list = None) -> ToolResult:
+    """Multi-turn request creator for leave/WFH/comp-off/missing-time."""
+    try:
+        type_label = request_type.replace('_', ' ').title()
+        is_single_day = request_type in ("comp_off", "missing_time")
+        needs_checkout = request_type == "missing_time"
+        today = context.get("current_date", str(date.today()))
+
+        # Merge full conversation so LLM can pick up data from any prior turn
+        conversation = ""
+        if history:
+            for turn in history:
+                conversation += f"{turn['role'].upper()}: {turn['content']}\n"
+        conversation += f"USER: {message}"
+
+        if is_single_day:
+            prompt = f"""Today is {today}. Extract details for a {request_type} request from the conversation below.
+Return ONLY this JSON (use null for missing fields, never guess):
+{{"date":"YYYY-MM-DD","reason":"text"{',"checkout_time":"HH:MM"' if needs_checkout else ''}}}
+
+Conversation:
+{conversation}"""
+        else:
+            prompt = f"""Today is {today}. Extract details for a {request_type} request from the conversation below.
+Return ONLY this JSON (use null for missing fields, never guess):
+{{"from_date":"YYYY-MM-DD","to_date":"YYYY-MM-DD","reason":"text"}}
+
+Conversation:
+{conversation}"""
+
+        data = json_from_llm(llm_call(prompt, message, context, max_tokens=120))
+
+        # Normalize single-day types
+        if is_single_day and data.get("date"):
+            data["from_date"] = data["date"]
+            data["to_date"] = data["date"]
+
+        # Collect missing fields
+        missing = []
+        if not data.get("from_date"):
+            missing.append("date" if is_single_day else "start date")
+        if not is_single_day and not data.get("to_date"):
+            missing.append("end date")
+        if not data.get("reason"):
+            missing.append("reason")
+        if needs_checkout and not data.get("checkout_time"):
+            missing.append("checkout time (e.g. 18:30)")
+
+        if missing:
+            collected = {k: v for k, v in data.items() if v and k != "date"}
+            ask = json_from_llm(
+                llm_call(
+                    f"""User wants a {type_label} request. Collected so far: {json.dumps(collected)}.
+Missing: {missing}. Write one short natural question for the missing info only.
+Return JSON: {{"question": "..."}}""",
+                    message, context,
+                )
+            )
+            question = ask.get("question") or f"Could you share your {', '.join(missing)}?"
+            # Embed pending tag so action_handler routes the follow-up deterministically
+            return {"response": f"{question} [PENDING:{request_type}]", "api_call": None, "needs_followup": True}
+
+        # Parse dates
+        try:
+            from_date = date.fromisoformat(data["from_date"])
+            to_date = date.fromisoformat(data["to_date"])
+        except (ValueError, KeyError):
+            return {"response": "Please provide dates in YYYY-MM-DD format (e.g. 2025-08-01).", "api_call": None, "needs_followup": True}
+
+        if from_date > to_date:
+            return {"response": "Start date cannot be after end date.", "api_call": None, "needs_followup": True}
+
+        if request_type in ("leave", "wfh") and from_date < date.today():
+            return {"response": "Leave and WFH requests must be for today or a future date.", "api_call": None, "needs_followup": True}
+
+        req = await request_service.create_request(
+            db, user,
+            RequestCreate(
+                request_type=request_type,
+                from_date=from_date,
+                to_date=to_date,
+                reason=data["reason"],
+                checkout_time=data.get("checkout_time"),
+            ),
         )
-    )
-    if "error" in data:
-        return {"response": f"I need more details: {data['error']}", "api_call": None, "needs_followup": True}
-    req = await request_service.create_request(
-        db,
-        user,
-        RequestCreate(
-            request_type=request_type,
-            from_date=date.fromisoformat(data["from_date"]),
-            to_date=date.fromisoformat(data["to_date"]),
-            reason=data["reason"],
-            checkout_time=data.get("checkout_time"),
-        ),
-    )
-    return {"response": f"{request_type.replace('_', ' ').title()} request submitted with status {req.status}."}
+        days = (to_date - from_date).days + 1
+        return {
+            "response": f"✓ {type_label} request submitted for {days} day(s) ({from_date} to {to_date}). Status: {req.status}",
+            "api_call": "POST /requests",
+            "needs_followup": False,
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Request failed: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _apply_leave(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
-    """Create leave request."""
-    return await _apply_request("leave", db, user, message, context)
+    return await _apply_request("leave", db, user, message, context, context.get("_history"))
 
 
 async def _apply_wfh(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
-    """Create WFH request."""
-    return await _apply_request("wfh", db, user, message, context)
+    return await _apply_request("wfh", db, user, message, context, context.get("_history"))
 
 
 async def _apply_comp_off(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
-    """Create comp-off request."""
-    return await _apply_request("comp_off", db, user, message, context)
+    return await _apply_request("comp_off", db, user, message, context, context.get("_history"))
 
 
 async def _apply_missing_time(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
-    """Create missing-time correction request."""
-    return await _apply_request("missing_time", db, user, message, context)
+    return await _apply_request("missing_time", db, user, message, context, context.get("_history"))
 
 
 async def _view_my_requests(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
-    """List current user's requests with short preview."""
-    rows = await request_service.get_user_requests(db, user)
-    if not rows:
-        return {"response": "You have no requests."}
-    preview = [f"- {r.request_type}: {r.status} ({r.from_date} to {r.to_date})" for r in rows[:7]]
-    return {"response": f"You have {len(rows)} request(s):\n" + "\n".join(preview)}
+    """List current user's requests with details."""
+    try:
+        rows = await request_service.get_user_requests(db, user)
+        if not rows:
+            return {"response": "You have no requests yet.", "api_call": "GET /requests", "needs_followup": False}
+
+        pending = [r for r in rows if r.status == "pending"]
+        approved = [r for r in rows if r.status == "approved"]
+        rejected = [r for r in rows if r.status == "rejected"]
+
+        lines = [f"📋 Your requests ({len(rows)} total):"]
+        if pending:
+            lines.append(f"\n⏳ Pending ({len(pending)}):")
+            for r in pending[:5]:
+                lines.append(f"  • {r.request_type.replace('_',' ').title()}: {r.from_date} → {r.to_date} | ID: ...{str(r.id)[-8:]}")
+        if approved:
+            lines.append(f"\n✓ Approved ({len(approved)}):")
+            for r in approved[:3]:
+                lines.append(f"  • {r.request_type.replace('_',' ').title()}: {r.from_date} → {r.to_date}")
+        if rejected:
+            lines.append(f"\n✗ Rejected ({len(rejected)}):")
+            for r in rejected[:3]:
+                note = f" | Note: {r.rejection_note}" if r.rejection_note else ""
+                lines.append(f"  • {r.request_type.replace('_',' ').title()}: {r.from_date} → {r.to_date}{note}")
+
+        return {"response": "\n".join(lines), "api_call": "GET /requests", "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to load requests: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _cancel_request(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
-    """Cancel one request owned by current user."""
-    request_id = extract_required_uuid(message, context, "request_id", 'Extract {"request_id":"uuid"}')
-    await request_service.cancel_request(db, request_id, user)
-    return {"response": "Request cancelled.", "api_call": f"DELETE /requests/{request_id}"}
+    """Cancel one pending request owned by current user."""
+    try:
+        request_id = extract_required_uuid(message, context, "request_id", 'Extract {"request_id":"uuid"}')
+        await request_service.cancel_request(db, request_id, user)
+        return {
+            "response": "✓ Request cancelled successfully.",
+            "api_call": f"DELETE /requests/{request_id}",
+            "needs_followup": False,
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to cancel request: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _view_balance(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Show balance values from already-built context."""
-    casual = context["leave_balance"]["casual"]
-    comp_off = context["leave_balance"]["comp_off"]
-    return {"response": f"Your leave balance: casual {casual}, comp-off {comp_off}."}
+    try:
+        casual = context["leave_balance"]["casual"]
+        comp_off = context["leave_balance"]["comp_off"]
+        return {
+            "response": f"📊 Your leave balance:\n  • Casual: {casual} day(s)\n  • Comp-off: {comp_off} day(s)",
+            "api_call": "GET /balances/me",
+            "needs_followup": False
+        }
+    except Exception as e:
+        return {"response": f"Failed to load balance: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _view_leave_history(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Show brief leave history summary for current user."""
-    data = await leave_service_Emp.get_my_leaves(db, user.id)
-    return {"response": f"Leave history loaded. Current month leave days: {len(data.current_month.dates)}."}
+    try:
+        data = await leave_service_Emp.get_my_leaves(db, user.id)
+        current_month_days = len(data.current_month.dates) if hasattr(data, 'current_month') else 0
+        return {
+            "response": f"📅 Leave history:\n  • This month: {current_month_days} day(s)",
+            "api_call": "GET /leaves/me",
+            "needs_followup": False
+        }
+    except Exception as e:
+        return {"response": f"Failed to load leave history: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _view_calendar(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Load org leave/WFH calendar for current month."""
-    today = date.today()
-    cal = await calendar_service.get_monthly_calendar(db, user.organization_id, today.month, today.year)
-    return {"response": f"Team calendar loaded for {cal.month}/{cal.year} with {len(cal.data)} day(s) having leave/WFH entries."}
+    try:
+        today = date.today()
+        cal = await calendar_service.get_monthly_calendar(db, user.organization_id, today.month, today.year)
+        entries = len(cal.data) if hasattr(cal, 'data') else 0
+        return {
+            "response": f"📆 Team calendar for {cal.month}/{cal.year}: {entries} day(s) with leave/WFH entries",
+            "api_call": "GET /calendar",
+            "needs_followup": False
+        }
+    except Exception as e:
+        return {"response": f"Failed to load calendar: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _list_projects(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Return active projects count."""
-    projects = await add_project_service.get_projects(db)
-    return {"response": f"There are {len(projects)} active project(s)."}
+    try:
+        projects = await add_project_service.get_projects(db)
+        return {
+            "response": f"📌 There are {len(projects)} active project(s) available",
+            "api_call": "GET /project/",
+            "needs_followup": False
+        }
+    except Exception as e:
+        return {"response": f"Failed to load projects: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _list_holidays(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Return holiday record count."""
-    holidays = await add_holiday_service.get_holidays(db)
-    return {"response": f"There are {len(holidays)} holiday record(s)."}
+    try:
+        holidays = await add_holiday_service.get_holidays(db)
+        return {
+            "response": f"🎉 There are {len(holidays)} holiday record(s) on the calendar",
+            "api_call": "GET /holiday/",
+            "needs_followup": False
+        }
+    except Exception as e:
+        return {"response": f"Failed to load holidays: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _approve_request(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin action to approve one request."""
-    ensure_admin(user)
-    request_id = extract_required_uuid(message, context, "request_id", 'Extract {"request_id":"uuid"}')
-    req = await request_service.approve_request(db, request_id, user)
-    return {"response": f"Approved {req.request_type} request for {req.employee_name}.", "api_call": f"PATCH /requests/{request_id}/approve"}
+    try:
+        ensure_admin(user)
+        request_id = extract_required_uuid(message, context, "request_id", 'Extract {"request_id":"uuid"}')
+        req = await request_service.approve_request(db, request_id, user)
+        return {
+            "response": f"✓ Approved {req.request_type.replace('_', ' ').title()} request for {req.employee_name}.",
+            "api_call": f"PATCH /requests/{request_id}/approve",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to approve request: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _reject_request(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin action to reject one request with optional note."""
-    ensure_admin(user)
-    data = json_from_llm(llm_call('Extract {"request_id":"uuid","note":"optional reason"}', message, context))
-    request_id = data.get("request_id") or extract_required_uuid(message, context, "request_id", 'Extract {"request_id":"uuid"}')
-    await request_service.reject_request(db, request_id, user, data.get("note"))
-    return {"response": "Request rejected.", "api_call": f"PATCH /requests/{request_id}/reject"}
+    try:
+        ensure_admin(user)
+        data = json_from_llm(llm_call('Extract {"request_id":"uuid","note":"optional reason"}', message, context))
+        request_id = data.get("request_id") or extract_required_uuid(message, context, "request_id", 'Extract {"request_id":"uuid"}')
+        req = await request_service.reject_request(db, request_id, user, data.get("note"))
+        return {
+            "response": f"✓ Rejected {req.request_type.replace('_', ' ').title()} request.",
+            "api_call": f"PATCH /requests/{request_id}/reject",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to reject request: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _view_all_requests(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin summary of all requests."""
-    ensure_admin(user)
-    rows = await leave_service.get_all_requests(db)
-    pending = len([r for r in rows if r["status"] == "pending"])
-    return {"response": f"Found {len(rows)} total requests ({pending} pending)."}
+    try:
+        ensure_admin(user)
+        rows = await leave_service.get_all_requests(db)
+        pending = len([r for r in rows if r["status"] == "pending"])
+        approved = len([r for r in rows if r["status"] == "approved"])
+        rejected = len([r for r in rows if r["status"] == "rejected"])
+        
+        summary = f"📋 All requests summary:\n"
+        summary += f"  • Total: {len(rows)}\n"
+        summary += f"  ✓ Approved: {approved}\n"
+        summary += f"  ⏳ Pending: {pending}\n"
+        summary += f"  ✗ Rejected: {rejected}"
+        
+        return {"response": summary, "api_call": "GET /requests/requests", "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to load requests: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _view_employee_balance(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin lookup for specific employee's request/balance context."""
-    ensure_admin(user)
-    emp_id = extract_required_uuid(message, context, "employee_id", 'Extract {"employee_id":"uuid"}')
-    target = (await db.execute(select(Employee).where(Employee.id == uuid.UUID(emp_id)))).scalars().first()
-    if not target:
-        raise HTTPException(status_code=404, detail="Employee not found.")
-    reqs = await request_service.get_user_requests(db, target)
-    return {"response": f"Loaded employee request/balance context for {target.email}. Total requests: {len(reqs)}.", "api_call": f"GET /balances/{emp_id}"}
+    try:
+        ensure_admin(user)
+        emp_id = extract_required_uuid(message, context, "employee_id", 'Extract {"employee_id":"uuid"}')
+        target = (await db.execute(select(Employee).where(Employee.id == uuid.UUID(emp_id)))).scalars().first()
+        if not target:
+            return {"response": "Employee not found.", "api_call": None, "needs_followup": False}
+        
+        reqs = await request_service.get_user_requests(db, target)
+        return {
+            "response": f"👤 {target.email}:\n  • Total requests: {len(reqs)}\n  • Active: Yes",
+            "api_call": f"GET /balances/{emp_id}",
+            "needs_followup": False
+        }
+    except Exception as e:
+        return {"response": f"Failed to load employee balance: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _view_leave_summary(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin leave-summary overview."""
-    ensure_admin(user)
-    rows = await leave_service.get_leave_summary(db)
-    return {"response": f"Leave summary loaded for {len(rows)} employee(s)."}
+    try:
+        ensure_admin(user)
+        rows = await leave_service.get_leave_summary(db)
+        return {
+            "response": f"📊 Leave summary for {len(rows)} employee(s) loaded successfully",
+            "api_call": "GET /leaves/summary",
+            "needs_followup": False
+        }
+    except Exception as e:
+        return {"response": f"Failed to load leave summary: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _view_employee_report(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin attendance report summary for one employee."""
-    ensure_admin(user)
-    emp_id = extract_required_uuid(message, context, "employee_id", 'Extract {"employee_id":"uuid"}')
-    report = await reporting_service.get_employee_report(uuid.UUID(emp_id), False, db)
-    return {"response": f"Report loaded with {len(report.records)} attendance record(s).", "api_call": f"GET /reporting/{emp_id}"}
+    try:
+        ensure_admin(user)
+        emp_id = extract_required_uuid(message, context, "employee_id", 'Extract {"employee_id":"uuid"}')
+        report = await reporting_service.get_employee_report(uuid.UUID(emp_id), False, db)
+        records = len(report.records) if hasattr(report, 'records') else 0
+        return {
+            "response": f"📈 Attendance report: {records} record(s) found",
+            "api_call": f"GET /reporting/{emp_id}",
+            "needs_followup": False
+        }
+    except Exception as e:
+        return {"response": f"Failed to load report: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _list_employees(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin list of active employees."""
-    ensure_admin(user)
-    rows = await add_user_service.list_employees(db)
-    return {"response": f"Found {len(rows)} active employee(s)."}
+    try:
+        ensure_admin(user)
+        rows = await add_user_service.list_employees(db)
+        return {
+            "response": f"👥 Found {len(rows)} active employee(s)",
+            "api_call": "GET /employee/",
+            "needs_followup": False
+        }
+    except Exception as e:
+        return {"response": f"Failed to load employees: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _add_employee(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin create employee from extracted payload."""
-    ensure_admin(user)
-    data = json_from_llm(llm_call('Extract {"email":"...","department_name":"...","designation":"..."}', message, context))
-    emp = await add_user_service.create_employee(CreateEmployeeRequest(**data), db)
-    return {"response": f"Employee added: {emp.email}."}
+    try:
+        ensure_admin(user)
+        data = json_from_llm(llm_call('Extract {"email":"user@company.com","department_name":"HR","designation":"Manager"}', message, context))
+        
+        if not data.get("email"):
+            return {"response": "Email is required to add an employee.", "api_call": None, "needs_followup": True}
+        
+        emp = await add_user_service.create_employee(CreateEmployeeRequest(**data), db)
+        return {
+            "response": f"✓ Employee added: {emp.email}",
+            "api_call": "POST /employee/add",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to add employee: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _deactivate_employee(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin deactivate employee."""
-    ensure_admin(user)
-    emp_id = extract_required_uuid(message, context, "employee_id", 'Extract {"employee_id":"uuid"}')
-    await add_user_service.delete_employee(uuid.UUID(emp_id), db)
+    try:
+        ensure_admin(user)
+        emp_id = extract_required_uuid(message, context, "employee_id", 'Extract {"employee_id":"uuid"}')
+        emp = await add_user_service.delete_employee(uuid.UUID(emp_id), db)
+        return {
+            "response": f"✓ Employee deactivated: {emp.email}",
+            "api_call": f"DELETE /employee/{emp_id}",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to deactivate employee: {str(e)}", "api_call": None, "needs_followup": False}
     return {"response": "Employee deactivated.", "api_call": f"DELETE /employee/{emp_id}"}
 
 
 async def _add_project(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin create project."""
-    ensure_admin(user)
-    data = json_from_llm(llm_call('Extract {"name":"project name","description":"optional"}', message, context))
-    project = await add_project_service.create_project(ProjectCreate(**data), db)
-    return {"response": f"Project created: {project.name}."}
+    try:
+        ensure_admin(user)
+        data = json_from_llm(llm_call('Extract {"name":"project name","description":"optional description"}', message, context))
+        
+        if not data.get("name"):
+            return {"response": "Project name is required.", "api_call": None, "needs_followup": True}
+        
+        project = await add_project_service.create_project(ProjectCreate(**data), db)
+        return {
+            "response": f"✓ Project created: {project.name}",
+            "api_call": "POST /project/add",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to create project: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _delete_project(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin delete project."""
-    ensure_admin(user)
-    project_id = extract_required_uuid(message, context, "project_id", 'Extract {"project_id":"uuid"}')
-    await add_project_service.delete_project(uuid.UUID(project_id), db)
-    return {"response": "Project deleted.", "api_call": f"DELETE /project/{project_id}"}
+    try:
+        ensure_admin(user)
+        project_id = extract_required_uuid(message, context, "project_id", 'Extract {"project_id":"uuid"}')
+        await add_project_service.delete_project(uuid.UUID(project_id), db)
+        return {
+            "response": "✓ Project deleted successfully",
+            "api_call": f"DELETE /project/{project_id}",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to delete project: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _add_holiday(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin create holiday."""
-    ensure_admin(user)
-    data = json_from_llm(llm_call('Extract {"name":"...","type":"public|internal|other","date":"YYYY-MM-DD"}', message, context))
-    holiday = await add_holiday_service.create_holiday(SetHoliday(**data), db)
-    return {"response": f"Holiday added: {holiday.name} on {holiday.holiday_date}."}
+    try:
+        ensure_admin(user)
+        data = json_from_llm(llm_call('Extract {"name":"holiday name","type":"public|internal|other","date":"YYYY-MM-DD"}', message, context))
+        
+        if not all(k in data for k in ["name", "type", "date"]):
+            return {"response": "Please provide holiday name, type (public/internal/other), and date (YYYY-MM-DD).", "api_call": None, "needs_followup": True}
+        
+        holiday = await add_holiday_service.create_holiday(SetHoliday(**data), db)
+        return {
+            "response": f"✓ Holiday added: {holiday.name} on {holiday.holiday_date}",
+            "api_call": "POST /holiday/add",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to add holiday: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _delete_holiday(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Admin delete holiday."""
-    ensure_admin(user)
-    holiday_id = extract_required_uuid(message, context, "holiday_id", 'Extract {"holiday_id":"uuid"}')
-    await add_holiday_service.delete_holiday(uuid.UUID(holiday_id), db)
-    return {"response": "Holiday deleted.", "api_call": f"DELETE /holiday/{holiday_id}"}
+    try:
+        ensure_admin(user)
+        holiday_id = extract_required_uuid(message, context, "holiday_id", 'Extract {"holiday_id":"uuid"}')
+        await add_holiday_service.delete_holiday(uuid.UUID(holiday_id), db)
+        return {
+            "response": "✓ Holiday deleted successfully",
+            "api_call": f"DELETE /holiday/{holiday_id}",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to delete holiday: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _promote_to_admin(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Superadmin promote employee to admin."""
-    ensure_superadmin(user)
-    emp_id = extract_required_uuid(message, context, "employee_id", 'Extract {"employee_id":"uuid"}')
-    result = await superadmin_service.promote_to_admin(uuid.UUID(emp_id), db)
-    return {"response": result["message"], "api_call": f"PATCH /superadmin/users/{emp_id}/promote"}
+    try:
+        ensure_superadmin(user)
+        emp_id = extract_required_uuid(message, context, "employee_id", 'Extract {"employee_id":"uuid"}')
+        result = await superadmin_service.promote_to_admin(uuid.UUID(emp_id), db)
+        return {
+            "response": f"✓ {result['message']}",
+            "api_call": f"PATCH /superadmin/users/{emp_id}/promote",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to promote user: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _demote_to_employee(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Superadmin demote admin to employee."""
-    ensure_superadmin(user)
-    emp_id = extract_required_uuid(message, context, "employee_id", 'Extract {"employee_id":"uuid"}')
-    result = await superadmin_service.demote_to_employee(uuid.UUID(emp_id), db)
-    return {"response": result["message"], "api_call": f"PATCH /superadmin/users/{emp_id}/demote"}
+    try:
+        ensure_superadmin(user)
+        emp_id = extract_required_uuid(message, context, "employee_id", 'Extract {"employee_id":"uuid"}')
+        result = await superadmin_service.demote_to_employee(uuid.UUID(emp_id), db)
+        return {
+            "response": f"✓ {result['message']}",
+            "api_call": f"PATCH /superadmin/users/{emp_id}/demote",
+            "needs_followup": False
+        }
+    except HTTPException as e:
+        return {"response": str(e.detail), "api_call": None, "needs_followup": False}
+    except Exception as e:
+        return {"response": f"Failed to demote user: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 async def _list_all_users(db: AsyncSession, user: Employee, message: str, context: dict) -> ToolResult:
     """Superadmin list all users."""
-    ensure_superadmin(user)
-    rows = await superadmin_service.list_all_users(db)
-    return {"response": f"Found {len(rows)} user(s) across all roles."}
+    try:
+        ensure_superadmin(user)
+        rows = await superadmin_service.list_all_users(db)
+        return {
+            "response": f"👥 Found {len(rows)} user(s) across all roles",
+            "api_call": "GET /superadmin/users",
+            "needs_followup": False
+        }
+    except Exception as e:
+        return {"response": f"Failed to load users: {str(e)}", "api_call": None, "needs_followup": False}
 
 
 def get_tool_registry() -> dict[str, ToolSpec]:
@@ -565,3 +920,7 @@ def get_tool_registry() -> dict[str, ToolSpec]:
         "demote_to_employee": ToolSpec("demote_to_employee", "PATCH /superadmin/users/{id}/demote", "superadmin", _demote_to_employee),
         "list_all_users": ToolSpec("list_all_users", "GET /superadmin/users", "superadmin", _list_all_users),
     }
+
+
+
+

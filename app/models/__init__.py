@@ -57,3 +57,4 @@ from app.models.holiday import Holiday
 from app.models.audit_log import AuditLog
 from app.models.ai_conversation import AIConversation
 from app.models.ai_audit_log import AIAuditLog
+from app.models.password_reset_otp import PasswordResetOTP

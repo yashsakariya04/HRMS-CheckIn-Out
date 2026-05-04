@@ -46,7 +46,9 @@ def llm_call(system: str, user_msg: str, context: dict, max_tokens: int = 220) -
 
     Uses fast model by default and falls back to the larger model on rate-limit.
     """
-    ctx_str = json.dumps(context, indent=2)
+    # Strip internal keys that should not be sent to the LLM
+    safe_ctx = {k: v for k, v in context.items() if k != "_history"}
+    ctx_str = json.dumps(safe_ctx, indent=2)
     messages = [
         {"role": "system", "content": f"{system}\n\nUser context:\n{ctx_str}"},
         {"role": "user", "content": user_msg},
@@ -71,8 +73,17 @@ def llm_call(system: str, user_msg: str, context: dict, max_tokens: int = 220) -
 def json_from_llm(raw: str) -> dict[str, Any]:
     """Strip optional markdown fences and parse strict JSON output."""
     raw = re.sub(r"^```[a-z]*\n?", "", raw.strip())
-    raw = re.sub(r"\n?```$", "", raw)
-    return json.loads(raw)
+    raw = re.sub(r"\n?```$", "", raw).strip()
+    if not raw:
+        return {}
+    # Try to extract a JSON object if the LLM wrapped it in extra text
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if match:
+        raw = match.group(0)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
 
 
 def extract_uuid(text: str) -> str | None:

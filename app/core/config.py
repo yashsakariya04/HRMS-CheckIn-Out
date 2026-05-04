@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     CORS_ORIGINS: str = "http://localhost:5173"
 
+    # ── SMTP (Gmail) — for password reset OTP emails ──────────────────────────
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""          # Gmail App Password (not your login password)
+    SMTP_FROM: str = ""
+    SMTP_FROM_NAME: str = "HRMS"
+
     # ── Groq (LLM for AI chat) ────────────────────────────────────────────────
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"        # generation + chat

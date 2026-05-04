@@ -48,12 +48,28 @@ async def handle_action(
     """
     registry = get_tool_registry()
 
+    # Inject history into context so executors can use it for multi-turn extraction
+    context["_history"] = history or []
+
     if history:
-        # If the previous assistant question was check-in follow-up, force that flow
-        # even if the current classifier hint differs.
         last_assistant = next((m["content"] for m in reversed(history) if m["role"] == "assistant"), "")
-        if "What are you working on today" in last_assistant:
+
+        # Check-in follow-up: last assistant was asking for project/task/hours
+        if "[PENDING:check_in]" in last_assistant:
             return await checkin_followup(db, user, message, context)
+
+        # Request follow-up: last assistant was asking for request details
+        pending_request_map = {
+            "[PENDING:apply_leave]": "apply_leave",
+            "[PENDING:apply_wfh]": "apply_wfh",
+            "[PENDING:apply_comp_off]": "apply_comp_off",
+            "[PENDING:apply_missing_time]": "apply_missing_time",
+        }
+        for tag, hint in pending_request_map.items():
+            if tag in last_assistant:
+                spec = registry.get(hint)
+                if spec:
+                    return await execute_tool(spec, db, user, message, context)
 
     spec = registry.get(action_hint or "")
     if not spec:

@@ -150,15 +150,35 @@ def verify_token(token: str, hashed: str) -> bool:
     """
     Verify that a raw token matches its stored hash.
     Uses hmac.compare_digest to prevent timing attacks.
-
-    Args:
-        token:  Raw token string provided by the client.
-        hashed: SHA-256 hash stored in the database.
-
-    Returns:
-        True if the token matches the hash, False otherwise.
     """
     return hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), hashed)
+
+
+def create_reset_token(email: str) -> str:
+    """
+    Create a short-lived JWT (15 min) that authorises a password reset.
+    Embeds the email and type="password_reset" so it cannot be used as an access token.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+    return jwt.encode(
+        {"sub": email, "type": "password_reset", "exp": expire, "iat": datetime.now(timezone.utc)},
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+
+
+def decode_reset_token(token: str) -> str | None:
+    """
+    Decode a password-reset JWT. Returns the email on success, None on failure.
+    Rejects tokens whose type is not "password_reset".
+    """
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("type") != "password_reset":
+            return None
+        return payload.get("sub")
+    except JWTError:
+        return None
 
 
 

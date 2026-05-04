@@ -21,6 +21,8 @@ better performance.
 # [Large block of old synchronous code omitted — see git history]
 
 from datetime import date, datetime, timedelta, timezone
+import random
+import string
 
 from fastapi import HTTPException
 from google.auth.transport import requests
@@ -29,11 +31,13 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.email import send_otp_email
 from app.core.security import (
-    create_access_token, create_refresh_token, hash_token, verify_token,
-    verify_password,
+    create_access_token, create_refresh_token, create_reset_token,
+    decode_reset_token, hash_password, hash_token, verify_password, verify_token,
 )
 from app.models.employee import Employee
+from app.models.password_reset_otp import PasswordResetOTP
 from app.models.refresh_token import RefreshToken
 
 
@@ -220,3 +224,122 @@ async def google_login(id_token_str: str, db: AsyncSession) -> dict:
 
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}   
     
+
+
+# ── OTP helper ────────────────────────────────────────────────────────────────
+
+def _generate_otp() -> str:
+    """Return a 6-digit numeric OTP string."""
+    return "".join(random.choices(string.digits, k=6))
+
+
+# ── Forgot password flow ──────────────────────────────────────────────────────
+
+async def forgot_password(email: str, db: AsyncSession) -> None:
+    """
+    Step 1 — Request OTP.
+
+    Always returns without error even if the email doesn't exist
+    (prevents email enumeration). Sends OTP only when the employee exists.
+
+    - Invalidates any previous unused OTP for this email.
+    - Stores a new hashed OTP with a 10-minute expiry.
+    - Sends the plain OTP via email.
+    """
+    # Check employee exists (but don't reveal the result to the caller)
+    result = await db.execute(
+        select(Employee.id).where(Employee.email == email, Employee.is_active == True)  # noqa: E712
+    )
+    employee_exists = result.first() is not None
+
+    if employee_exists:
+        # Invalidate all previous unused OTPs for this email
+        prev_result = await db.execute(
+            select(PasswordResetOTP).where(
+                PasswordResetOTP.email == email,
+                PasswordResetOTP.is_used == False,  # noqa: E712
+            )
+        )
+        for old_row in prev_result.scalars().all():
+            old_row.is_used = True
+
+        # Generate and hash OTP
+        otp = _generate_otp()
+        from app.core.security import hash_password as hash_otp  # reuse argon2 hasher
+        otp_hash = hash_otp(otp)
+
+        db.add(PasswordResetOTP(
+            email=email,
+            otp_hash=otp_hash,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+        ))
+        await db.commit()
+
+        # Send email (fire — if this fails the OTP row is already committed)
+        await send_otp_email(email, otp)
+
+
+async def verify_otp(email: str, otp: str, db: AsyncSession) -> dict:
+    """
+    Step 2 — Verify OTP.
+
+    Finds the latest unused, unexpired OTP row for the email.
+    Enforces a 5-attempt brute-force limit.
+    On success: marks OTP as used and returns a 15-min reset JWT.
+    """
+    result = await db.execute(
+        select(PasswordResetOTP).where(
+            PasswordResetOTP.email == email,
+            PasswordResetOTP.is_used == False,  # noqa: E712
+            PasswordResetOTP.expires_at > datetime.now(timezone.utc),
+        ).order_by(PasswordResetOTP.created_at.desc())
+    )
+    otp_row = result.scalars().first()
+
+    if not otp_row:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
+
+    if otp_row.attempts >= 5:
+        raise HTTPException(status_code=400, detail="Too many attempts. Request a new OTP.")
+
+    # Verify OTP against stored hash
+    from app.core.security import verify_password as verify_otp_hash
+    if not verify_otp_hash(otp, otp_row.otp_hash):
+        otp_row.attempts += 1
+        await db.commit()
+        remaining = 5 - otp_row.attempts
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid OTP. {remaining} attempt(s) remaining.",
+        )
+
+    # Mark as used — single use only
+    otp_row.is_used = True
+    await db.commit()
+
+    reset_token = create_reset_token(email)
+    return {"reset_token": reset_token}
+
+
+async def reset_password(reset_token: str, new_password: str, confirm_password: str, db: AsyncSession) -> None:
+    """
+    Step 3 — Reset Password.
+
+    Validates the reset JWT, checks passwords match, then updates the hash.
+    """
+    if new_password != confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match.")
+
+    email = decode_reset_token(reset_token)
+    if not email:
+        raise HTTPException(status_code=401, detail="Invalid or expired reset token.")
+
+    result = await db.execute(
+        select(Employee).where(Employee.email == email, Employee.is_active == True)  # noqa: E712
+    )
+    employee = result.scalars().first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found.")
+
+    employee.hashed_password = hash_password(new_password)
+    await db.commit()
