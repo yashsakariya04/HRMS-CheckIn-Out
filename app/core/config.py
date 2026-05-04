@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     # CORS_ORIGINS: comma-separated list of frontend URLs allowed to call the API.
     #   Example: "http://localhost:5173,https://app.company.com"
     APP_ENV: str = "development"
-    CORS_ORIGINS: str = "http://localhost:5173"
+    CORS_ORIGINS: list[str] = ["http://localhost:5173","https://hrms-frontend-akta.onrender.com/"]
 
     # ── SMTP (Gmail) — for password reset OTP emails ──────────────────────────
     SMTP_HOST: str = "smtp.gmail.com"
