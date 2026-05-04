@@ -23,6 +23,7 @@ Key settings managed here:
 from functools import lru_cache
 from typing import Optional
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -80,7 +81,22 @@ class Settings(BaseSettings):
     # CORS_ORIGINS: comma-separated list of frontend URLs allowed to call the API.
     #   Example: "http://localhost:5173,https://app.company.com"
     APP_ENV: str = "development"
-    CORS_ORIGINS: list[str] = ["http://localhost:5173","https://hrms-frontend-akta.onrender.com/"]
+    CORS_ORIGINS: str = "http://localhost:5173"
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Accept plain comma-separated string, JSON array string, or list."""
+        import json
+        if isinstance(v, list):
+            return ",".join(v)
+        try:
+            parsed = json.loads(v)
+            if isinstance(parsed, list):
+                return ",".join(parsed)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return v
 
     # ── SMTP (Gmail) — for password reset OTP emails ──────────────────────────
     SMTP_HOST: str = "smtp.gmail.com"
@@ -96,14 +112,7 @@ class Settings(BaseSettings):
     GROQ_FAST_MODEL: str = "llama-3.1-8b-instant"      # classification + param extraction
 
     def get_cors_origins(self) -> list[str]:
-        """
-        Parse the CORS_ORIGINS string into a Python list.
-
-        Example:
-            "http://localhost:5173,https://app.company.com"
-            → ["http://localhost:5173", "https://app.company.com"]
-        """
-        return [o.strip() for o in self.CORS_ORIGINS.split(",")]
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
 
 @lru_cache()
