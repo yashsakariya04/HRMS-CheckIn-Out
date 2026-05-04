@@ -16,8 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import get_current_user
 from app.dependencies.database import get_db
-from app.schemas.auth import GoogleLoginRequest, LoginRequest, RefreshRequest, TokenResponse
-from app.services.auth_service import google_login, login, logout, refresh
+from app.schemas.auth import (
+    ForgotPasswordRequest, GoogleLoginRequest, LoginRequest,
+    RefreshRequest, ResetPasswordRequest, TokenResponse, VerifyOTPRequest,
+)
+from app.services.auth_service import (
+    forgot_password, google_login, login, logout, refresh,
+    reset_password, verify_otp,
+)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -62,9 +68,42 @@ async def get_me(user=Depends(get_current_user)):
 async def google_login_route(data: GoogleLoginRequest, db: AsyncSession = Depends(get_db)):
     """
     Main login flow — verify a Google ID token and issue HRMS tokens.
-
-    The frontend sends the ID token received from Google Sign-In.
-    The backend verifies it with Google, looks up the employee by email,
-    and returns access + refresh tokens if the employee exists and is active.
     """
     return await google_login(data.id_token, db)
+
+
+@router.post("/forgot-password", status_code=200)
+async def forgot_password_route(
+    data: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Step 1 — Request a password reset OTP.
+    Always returns 200 regardless of whether the email exists (prevents enumeration).
+    """
+    await forgot_password(data.email, db)
+    return {"message": "If that email is registered, an OTP has been sent."}
+
+
+@router.post("/verify-otp")
+async def verify_otp_route(
+    data: VerifyOTPRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Step 2 — Verify the OTP.
+    Returns a short-lived reset_token JWT on success.
+    """
+    return await verify_otp(data.email, data.otp, db)
+
+
+@router.post("/reset-password", status_code=200)
+async def reset_password_route(
+    data: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Step 3 — Set a new password using the reset_token from Step 2.
+    """
+    await reset_password(data.reset_token, data.new_password, data.confirm_password, db)
+    return {"message": "Password reset successful. You can now log in."}

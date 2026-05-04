@@ -111,6 +111,9 @@ async def chat(
         }
 
     response_text = result["response"]
+    # Strip internal pending tags before sending to user
+    import re as _re
+    response_text = _re.sub(r"\s*\[PENDING:[a-z_]+\]", "", response_text).strip()
     api_call = result.get("api_call")
     needs_followup = result.get("needs_followup", False)
 

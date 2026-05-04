@@ -40,3 +40,6 @@ cryptography
 # AI
 groq==0.13.1
 redis[asyncio]>=5.0.0
+
+# Email
+fastapi-mail==1.4.1

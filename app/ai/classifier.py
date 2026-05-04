@@ -37,71 +37,79 @@ from app.core.config import settings
 
 _client = Groq(api_key=settings.GROQ_API_KEY)
 
-_SYSTEM = """You are an intent classifier for an HRMS (HR Management System).
-Classify the user message into exactly one of these intents:
-  ACTION     - user wants to perform an action or view their own data
-  SQL        - user wants reports or data about multiple employees / org-wide stats
-  CHAT       - greeting, thanks, general conversation, how-to questions
-  AMBIGUOUS  - unclear intent
+_SYSTEM = """You are a strict intent classifier for an HRMS (HR Management System).
+Your ONLY job is to output valid JSON. Never explain. Never add text outside JSON.
 
-Respond with ONLY valid JSON:
+Output format (always exactly this):
 {"intent": "ACTION", "confidence": 0.95, "action_hint": "check_in"}
 
-action_hint must be one of these exact values (use null for non-ACTION intents):
+intent must be one of: ACTION, CHAT, AMBIGUOUS
+(SQL is reserved — never use it)
 
-  -- Attendance --
-  check_in               "check me in", "start my day"
-  check_out              "check me out", "end my day", "log off"
-  view_today_session     "am i checked in", "today's session", "my check in time"
-  view_attendance_month  "my attendance this month", "my sessions"
-  view_avg_hours         "my average hours", "how many hours this month"
+RULES:
+- If the user wants to VIEW data about themselves → ACTION
+- If the user wants to PERFORM an action → ACTION
+- If the user is greeting, thanking, or asking a general question → CHAT
+- When in doubt between two action_hints, pick the more specific one
+- "show", "view", "check", "what is", "how many" + a data topic → ACTION (view)
+- "apply","add", "submit", "request", "take", "need" + a leave/wfh topic → ACTION (apply)
+- NEVER classify a VIEW query as an APPLY action
 
-  -- Tasks --
-  view_tasks_today       "my tasks today", "what did i log today"
-  add_task               "add a task", "log a task", "i worked on"
-  edit_task              "edit task", "update task", "change task"
-  delete_task            "delete task", "remove task"
+CRITICAL DISAMBIGUATION:
+- "show leave balance" / "my leave balance" / "how many leaves" → view_balance (NOT apply_leave)
+- "my requests" / "show requests" / "request status" → view_my_requests (NOT apply_leave)
+- "apply leave" / "take leave" / "need leave" / "request leave" → apply_leave
+- "show my balance" / "leaves left" / "casual leaves" → view_balance
+- "check in" / "start my day" → check_in (NOT view_today_session)
+- "am i checked in" / "today session" → view_today_session (NOT check_in)
+- "my attendance" / "sessions this month" → view_attendance_month
+- "average hours" → view_avg_hours
+- "team calendar" / "who is on leave" → view_calendar (NOT view_leave_history)
+- "my leave history" / "when did i take leave" → view_leave_history (NOT view_calendar)
 
-  -- Requests --
-  apply_leave            "apply leave", "take a day off", "i need leave"
-  apply_wfh              "work from home", "wfh request", "work remotely"
-  apply_comp_off         "comp off", "compensatory off", "worked on holiday"
-  apply_missing_time     "missing checkout", "forgot to check out", "correct my time"
-  view_my_requests       "my requests", "my leave status", "pending requests"
-  cancel_request         "cancel my request", "withdraw request"
+action_hint must be exactly one of these values (null for CHAT/AMBIGUOUS):
 
-  -- Balances & Leaves --
-  view_balance           "my leave balance", "how many leaves", "leaves left"
-  view_leave_history     "my leave history", "when did i take leave"
+  check_in               user wants to check in / start their workday
+  check_out              user wants to check out / end their workday
+  view_today_session     user asks about today's attendance session status
+  view_attendance_month  user asks about their attendance this month
+  view_avg_hours         user asks about their average working hours
 
-  -- Info queries --
-  list_projects          "what projects", "show projects", "active projects"
-  list_holidays          "holidays", "upcoming holidays", "holiday list"
-  view_calendar          "team calendar", "who is on leave", "calendar this month"
+  view_tasks_today       user asks what tasks they logged today
+  add_task               user wants to add/log a new task
+  edit_task              user wants to edit/update an existing task
+  delete_task            user wants to delete/remove a task
 
-  -- Admin: Requests --
-  approve_request        "approve request", "approve leave"
-  reject_request         "reject request", "reject leave"
-  view_all_requests      "all requests", "pending approvals", "team requests"
+  apply_leave            user wants to SUBMIT a leave request (not view)
+  apply_wfh              user wants to SUBMIT a work-from-home request
+  apply_comp_off         user wants to SUBMIT a compensatory off request
+  apply_missing_time     user wants to correct a missing checkout time
+  view_my_requests       user wants to SEE their existing requests / status
+  cancel_request         user wants to cancel a pending request
 
-  -- Admin: Employees --
-  list_employees         "list employees", "show team", "all employees"
-  add_employee           "add employee", "new employee", "register employee"
-  deactivate_employee    "deactivate employee", "remove employee"
-  view_employee_balance  "employee balance", "check balance for"
-  view_leave_summary     "leave summary", "team leave balances"
-  view_employee_report   "attendance report for", "employee report"
+  view_balance           user wants to SEE their leave balance / remaining leaves
+  view_leave_history     user wants to see their past leave history
 
-  -- Admin: Projects & Holidays --
-  add_project            "add project", "create project", "new project"
-  delete_project         "delete project", "remove project"
-  add_holiday            "add holiday", "new holiday", "mark holiday"
-  delete_holiday         "delete holiday", "remove holiday"
+  list_projects          user asks what projects exist
+  list_holidays          user asks about holidays
+  view_calendar          user asks about team calendar / who is on leave
 
-  -- Superadmin --
-  promote_to_admin       "promote to admin", "make admin"
-  demote_to_employee     "demote", "remove admin", "make employee"
-  list_all_users         "all users", "list all users"
+  approve_request        admin approves a request
+  reject_request         admin rejects a request
+  view_all_requests      admin views all team requests
+  list_employees         admin lists employees
+  add_employee           admin adds a new employee
+  deactivate_employee    admin deactivates an employee
+  view_employee_balance  admin checks a specific employee's balance
+  view_leave_summary     admin views leave summary across team
+  view_employee_report   admin views attendance report for an employee
+  add_project            admin adds a project
+  delete_project         admin deletes a project
+  add_holiday            admin adds a holiday
+  delete_holiday         admin deletes a holiday
+  promote_to_admin       superadmin promotes user to admin
+  demote_to_employee     superadmin demotes admin to employee
+  list_all_users         superadmin lists all users
 """
 
 _CACHE_TTL = 300
