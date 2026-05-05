@@ -9,3 +9,5 @@ keys/
 .pytest_cache/
 .vscode/
 .DS_Store
+client_secret.json
+get_gmail_refresh_token.py

@@ -98,13 +98,18 @@ class Settings(BaseSettings):
             pass
         return v
 
-    # ── SMTP (Gmail) — for password reset OTP emails ──────────────────────────
-    SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""          # Gmail App Password (not your login password)
-    SMTP_FROM: str = ""
-    SMTP_FROM_NAME: str = "HRMS"
+    # ── Gmail OAuth2 — for password reset OTP emails ──────────────────────────
+    # Separate Google project/credentials from the login OAuth app.
+    # GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET: from the Gmail-sender Google Cloud project
+    # GMAIL_REDIRECT_URI: must exactly match what is registered in Google Cloud Console
+    # GMAIL_REFRESH_TOKEN: obtained once via /auth/gmail/authorize flow
+    # GMAIL_FROM: the Gmail address that sends emails (must match the OAuth2 account)
+    GMAIL_CLIENT_ID: str = ""
+    GMAIL_CLIENT_SECRET: str = ""
+    GMAIL_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/gmail/callback"
+    GMAIL_REFRESH_TOKEN: str = ""
+    GMAIL_FROM: str = ""
+    GMAIL_FROM_NAME: str = "HRMS"
 
     # ── Groq (LLM for AI chat) ────────────────────────────────────────────────
     GROQ_API_KEY: str = ""
