@@ -22,7 +22,7 @@ google-auth-httplib2==0.2.0
 requests==2.32.3
 
 # Request Handling
-python-multipart==0.0.22
+python-multipart==0.0.22    
 python-dotenv==1.0.1
 
 # Background Jobs
@@ -41,5 +41,4 @@ cryptography
 groq==0.13.1
 redis[asyncio]>=5.0.0
 
-# Email
-fastapi-mail==1.4.1
+# Email (Gmail API via OAuth2 — httpx already listed above under Testing)
