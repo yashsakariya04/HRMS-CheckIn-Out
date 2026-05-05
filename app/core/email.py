@@ -36,16 +36,16 @@ async def _get_access_token() -> str:
 async def send_otp_email(to_email: str, otp: str) -> None:
     """Send a password reset OTP email via the Gmail API."""
     body = f"""
-    <h3>Password Reset OTP</h3>
-    <p>Your OTP for resetting your HRMS password is:</p>
+    <p>Hi there,</p>
+    <p>To complete your password reset, please enter the code below in the browser window where you started the process.</p>
     <h2 style="letter-spacing: 4px;">{otp}</h2>
-    <p>This OTP is valid for <strong>10 minutes</strong> and can only be used once.</p>
-    <p>If you did not request a password reset, ignore this email.</p>
+    <p>Time remaining: 10:00 minutes</p>
+    <p style="color: gray; font-size: 12px;">This is an automated message. Please do not reply to this email. For technical assistance, please visit the Internal Support Portal.</p>
     """
     mime = MIMEText(body, "html")
     mime["to"] = to_email
     mime["from"] = f"{settings.GMAIL_FROM_NAME} <{settings.GMAIL_FROM}>"
-    mime["subject"] = "HRMS — Password Reset OTP"
+    mime["subject"] = "HRMS | Verification Code"
     raw = base64.urlsafe_b64encode(mime.as_bytes()).decode()
 
     access_token = await _get_access_token()
