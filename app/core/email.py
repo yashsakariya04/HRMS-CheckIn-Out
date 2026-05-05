@@ -26,14 +26,15 @@ def _get_mailer() -> FastMail:
 async def send_otp_email(to_email: str, otp: str) -> None:
     """Send a password reset OTP email to the given address."""
     body = f"""
-    <h3>Password Reset OTP</h3>
-    <p>Your OTP for resetting your HRMS password is:</p>
+    <p>Hi there,</p>
+    <p>To complete your password reset, please enter the code below in the browser window where you started the process.</p>
     <h2 style="letter-spacing: 4px;">{otp}</h2>
-    <p>This OTP is valid for <strong>10 minutes</strong> and can only be used once.</p>
-    <p>If you did not request a password reset, ignore this email.</p>
+    <p>Time remaining: <strong>10:00 minutes</strong></p>
+    <hr>
+    <p style="color: gray; font-size: 12px;">This is an automated message. Please do not reply to this email. For technical assistance, please visit the Internal Support Portal.</p>
     """
     message = MessageSchema(
-        subject="HRMS — Password Reset OTP",
+        subject="HRMS | Verification Code",
         recipients=[to_email],
         body=body,
         subtype=MessageType.html,
