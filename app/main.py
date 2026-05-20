@@ -34,6 +34,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.jobs.leave_rollover import run_leave_rollover
+from app.jobs.tracker_jobs import run_deadline_reminders, run_overdue_flagging
 from app.routers import (
     attendance as attendance_router,
     auth as auth_router,
@@ -47,6 +48,12 @@ from app.routers import (
 from app.routers import add_holiday_api, add_project_api, add_user_api
 from app.routers import superadmin as superadmin_router
 from app.ai import router as ai_router
+from app.routers.tracker import tasks as tracker_tasks
+from app.routers.tracker import comments as tracker_comments
+from app.routers.tracker import extensions as tracker_extensions
+from app.routers.tracker import files as tracker_files
+from app.routers.tracker import notifications as tracker_notifications
+from app.routers.tracker import analytics as tracker_analytics
 
 
 @asynccontextmanager
@@ -65,6 +72,8 @@ async def lifespan(app):
     scheduler = AsyncIOScheduler()
     # Run leave rollover on the 1st of every month at 00:05
     scheduler.add_job(run_leave_rollover, "cron", day=1, hour=0, minute=5)
+    scheduler.add_job(run_deadline_reminders, "cron", hour=8, minute=0)   # 8 AM daily
+    scheduler.add_job(run_overdue_flagging,   "cron", hour=0, minute=30)  # 12:30 AM daily
     scheduler.start()
     yield  # Application runs here
     scheduler.shutdown()
@@ -101,6 +110,12 @@ app.include_router(add_project_api.router,   prefix="/api/v1")  # Admin: manage 
 app.include_router(add_holiday_api.router,   prefix="/api/v1")  # Admin: manage holidays
 app.include_router(superadmin_router.router, prefix="/api/v1")  # Superadmin: role management
 app.include_router(ai_router.router,          prefix="/api/v1")  # AI chat
+app.include_router(tracker_tasks.router,        prefix="/api/v1")  # Tracker: tasks
+app.include_router(tracker_comments.router,     prefix="/api/v1")  # Tracker: comments
+app.include_router(tracker_extensions.router,   prefix="/api/v1")  # Tracker: extensions
+app.include_router(tracker_files.router,        prefix="/api/v1")  # Tracker: file uploads
+app.include_router(tracker_notifications.router,prefix="/api/v1")  # Tracker: notifications
+app.include_router(tracker_analytics.router,    prefix="/api/v1")  # Tracker: analytics
 
 
 @app.get("/health", tags=["Health"])

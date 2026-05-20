@@ -58,3 +58,9 @@ from app.models.audit_log import AuditLog
 from app.models.ai_conversation import AIConversation
 from app.models.ai_audit_log import AIAuditLog
 from app.models.password_reset_otp import PasswordResetOTP
+from app.models.tracker.task import TrackerTask
+from app.models.tracker.attachment import TrackerAttachment
+from app.models.tracker.comment import TrackerComment
+from app.models.tracker.activity_log import TrackerActivityLog
+from app.models.tracker.extension_request import TrackerExtensionRequest
+from app.models.tracker.notification import TrackerNotification
