@@ -263,14 +263,28 @@ async def update_status(
     return task
 
 
+async def delete_task(
+    db: AsyncSession,
+    task_id: uuid.UUID,
+    admin: Employee,
+) -> None:
+    task = await _get_task(db, task_id, admin.organization_id)
+    await db.delete(task)
+    await db.commit()
+
+
 async def get_tasks_for_employee(
     db: AsyncSession,
     user: Employee,
     status: Optional[str] = None,
 ) -> list[TrackerTask]:
+    ownership = or_(
+        TrackerTask.assigned_to == user.id,
+        TrackerTask.created_by == user.id,
+    )
     conditions = [
         TrackerTask.organization_id == user.organization_id,
-        TrackerTask.assigned_to == user.id,
+        ownership,
     ]
     if status:
         conditions.append(TrackerTask.status == status)
