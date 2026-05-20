@@ -19,10 +19,6 @@ class TrackerTask(Base):
             name="chk_tracker_task_request_type",
         ),
         CheckConstraint(
-            "severity IN ('low', 'medium', 'high', 'critical')",
-            name="chk_tracker_task_severity",
-        ),
-        CheckConstraint(
             "priority IN ('low', 'medium', 'high', 'urgent')",
             name="chk_tracker_task_priority",
         ),
@@ -46,7 +42,6 @@ class TrackerTask(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     request_type: Mapped[str] = mapped_column(String(10), nullable=False)  # bug | task
-    severity: Mapped[str] = mapped_column(String(10), server_default="medium", nullable=False)
     priority: Mapped[str] = mapped_column(String(10), server_default="medium", nullable=False)
     status: Mapped[str] = mapped_column(String(20), server_default="pending_approval", nullable=False)
     deadline: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
