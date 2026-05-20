@@ -33,7 +33,7 @@ async def review_extension(
 
 @router.get("/pending", response_model=list[ExtensionResponse])
 async def list_pending_extensions(
-    admin: Employee = Depends(require_admin),
+    user: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await extension_service.get_pending_extensions(db, admin.organization_id)
+    return await extension_service.get_pending_extensions(db, user.organization_id)

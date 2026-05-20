@@ -74,6 +74,15 @@ async def assign_task(
     return await task_service.assign_task(db, task_id, payload, admin)
 
 
+@router.delete("/{task_id}", status_code=204)
+async def delete_task(
+    task_id: uuid.UUID,
+    admin: Employee = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    await task_service.delete_task(db, task_id, admin)
+
+
 @router.patch("/{task_id}/status", response_model=TaskResponse)
 async def update_status(
     task_id: uuid.UUID,
