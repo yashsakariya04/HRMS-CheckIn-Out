@@ -48,7 +48,6 @@ class TaskResponse(BaseModel):
     title: str
     description: Optional[str]
     request_type: str
-    severity: str
     priority: str
     status: str
     deadline: Optional[datetime]

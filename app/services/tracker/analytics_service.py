@@ -32,17 +32,6 @@ async def get_dashboard_stats(db: AsyncSession, org_id: uuid.UUID) -> dict:
     )
     overdue = result.scalar() or 0
 
-    # Bug severity distribution
-    result = await db.execute(
-        select(TrackerTask.severity, func.count().label("cnt"))
-        .where(
-            TrackerTask.organization_id == org_id,
-            TrackerTask.request_type == "bug",
-        )
-        .group_by(TrackerTask.severity)
-    )
-    severity_dist = {row.severity: row.cnt for row in result.all()}
-
     # Per-employee productivity (assigned tasks completed vs total)
     result = await db.execute(
         select(
@@ -71,6 +60,5 @@ async def get_dashboard_stats(db: AsyncSession, org_id: uuid.UUID) -> dict:
         "total_tasks": total,
         "by_status": by_status,
         "overdue": overdue,
-        "severity_distribution": severity_dist,
         "employee_productivity": productivity,
     }

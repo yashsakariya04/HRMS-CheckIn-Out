@@ -43,7 +43,6 @@ async def admin_create_task(
 async def list_tasks(
     status: Optional[str] = Query(None),
     priority: Optional[str] = Query(None),
-    severity: Optional[str] = Query(None),
     assigned_to: Optional[uuid.UUID] = Query(None),
     overdue_only: bool = Query(False),
     user: Employee = Depends(get_current_user),
@@ -51,7 +50,7 @@ async def list_tasks(
 ):
     if user.role in ("admin", "superadmin"):
         return await task_service.get_tasks_for_admin(
-            db, user.organization_id, status, priority, severity, assigned_to, overdue_only
+            db, user.organization_id, status, priority, assigned_to, overdue_only
         )
     return await task_service.get_tasks_for_employee(db, user, status)
 

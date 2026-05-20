@@ -51,7 +51,6 @@ async def create_bug_report(
         title=payload.title,
         description=payload.description,
         request_type="bug",
-        severity="medium",   # admin sets severity when assigning
         priority="medium",   # admin sets priority when assigning
         created_by=creator.id,
         status="pending_approval",
@@ -99,7 +98,6 @@ async def create_and_assign_task(
         title=payload.title,
         description=payload.description,
         request_type="task",
-        severity="medium",
         priority=payload.priority,
         deadline=payload.deadline,
         assigned_to=payload.assigned_to,
@@ -287,7 +285,6 @@ async def get_tasks_for_admin(
     org_id: uuid.UUID,
     status: Optional[str] = None,
     priority: Optional[str] = None,
-    severity: Optional[str] = None,
     assigned_to: Optional[uuid.UUID] = None,
     overdue_only: bool = False,
 ) -> list[TrackerTask]:
@@ -296,8 +293,6 @@ async def get_tasks_for_admin(
         conditions.append(TrackerTask.status == status)
     if priority:
         conditions.append(TrackerTask.priority == priority)
-    if severity:
-        conditions.append(TrackerTask.severity == severity)
     if assigned_to:
         conditions.append(TrackerTask.assigned_to == assigned_to)
     if overdue_only:
