@@ -51,6 +51,7 @@ from app.models.holiday import Holiday
 from app.models.leave_wfh_request import LeaveWFHRequest
 from app.schemas.request_Emp import RequestCreate, RequestListResponse, RequestResponse
 from app.jobs.leave_rollover import _is_in_probation
+from app.services.leave_notification_service import notify_leave
 
 
 # ─────────────────────────────────────────────────────────────
@@ -382,6 +383,30 @@ async def create_request(
         status="pending",
     )
     db.add(req)
+    await db.flush()
+
+    # Notify all admins that a new request was submitted
+    _TYPE_LABEL = {
+        "leave": "Leave", "wfh": "WFH",
+        "missing_time": "Missing Time", "comp_off": "Comp-Off",
+    }
+    label = _TYPE_LABEL.get(body.request_type, body.request_type.replace("_", " ").title())
+    admins = await db.execute(
+        select(Employee).where(
+            Employee.organization_id == employee.organization_id,
+            Employee.role.in_(["admin", "superadmin"]),
+            Employee.is_active == True,
+        )
+    )
+    for admin in admins.scalars().all():
+        await notify_leave(
+            db, admin.id,
+            f"New {label} Request",
+            f"{employee.full_name or employee.email} submitted a {label} request "
+            f"({body.from_date} – {body.to_date}).",
+            req.id,
+        )
+
     await db.commit()
     await db.refresh(req)
     return _to_response(req)
@@ -516,13 +541,27 @@ async def approve_request(
     req.reviewed_by = admin.id
     req.reviewed_at = datetime.now(timezone.utc)
 
-    await db.commit()
-    await db.refresh(req)
+    await db.flush()
 
     emp_result = await db.execute(
         select(Employee).where(Employee.id == req.employee_id)
     )
     employee = emp_result.scalars().first()
+
+    _TYPE_LABEL = {
+        "leave": "Leave", "wfh": "WFH",
+        "missing_time": "Missing Time", "comp_off": "Comp-Off",
+    }
+    label = _TYPE_LABEL.get(req.request_type, req.request_type.replace("_", " ").title())
+    await notify_leave(
+        db, req.employee_id,
+        f"{label} Request Approved",
+        f"Your {label} request ({req.from_date} – {req.to_date}) has been approved.",
+        req.id,
+    )
+
+    await db.commit()
+    await db.refresh(req)
     return _to_list_response(req, employee)
 
 
@@ -549,6 +588,18 @@ async def reject_request(
     req.reviewed_by = admin.id
     req.reviewed_at = datetime.now(timezone.utc)
     req.rejection_note = note
+
+    await db.flush()
+
+    _TYPE_LABEL = {
+        "leave": "Leave", "wfh": "WFH",
+        "missing_time": "Missing Time", "comp_off": "Comp-Off",
+    }
+    label = _TYPE_LABEL.get(req.request_type, req.request_type.replace("_", " ").title())
+    msg = f"Your {label} request ({req.from_date} – {req.to_date}) has been rejected."
+    if note:
+        msg += f" Reason: {note}"
+    await notify_leave(db, req.employee_id, f"{label} Request Rejected", msg, req.id)
 
     await db.commit()
     await db.refresh(req)
