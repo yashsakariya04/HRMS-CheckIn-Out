@@ -71,6 +71,7 @@ async def get_leave_summary(db: AsyncSession) -> list[dict]:
     result = await db.execute(
         select(Employee.id, Employee.full_name)
         .join(EmployeeLeaveBalance, EmployeeLeaveBalance.employee_id == Employee.id)
+        .where(Employee.role != "superadmin")
         .distinct()
     )
     employees = result.all()  # plain Row tuples (id, full_name)

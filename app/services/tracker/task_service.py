@@ -87,6 +87,7 @@ async def create_and_assign_task(
             Employee.id == payload.assigned_to,
             Employee.organization_id == admin.organization_id,
             Employee.is_active == True,
+            Employee.role != "superadmin",
         )
     )
     assignee = result.scalars().first()
@@ -156,6 +157,7 @@ async def assign_task(
             Employee.id == payload.assigned_to,
             Employee.organization_id == admin.organization_id,
             Employee.is_active == True,
+            Employee.role != "superadmin",
         )
     )
     assignee = result.scalars().first()
