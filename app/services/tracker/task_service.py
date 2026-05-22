@@ -30,11 +30,11 @@ _TRANSITIONS: dict[str, list[str]] = {
     "pending_approval": ["assigned", "rejected"],
     "assigned":         ["todo", "rejected"],
     # Free movement within kanban — in_production is terminal
-    "todo":             ["in_progress", "in_development", "in_qa", "in_stage", "in_production"],
-    "in_progress":      ["todo", "in_development", "in_qa", "in_stage", "in_production"],
-    "in_development":   ["todo", "in_progress", "in_qa", "in_stage", "in_production"],
-    "in_qa":            ["todo", "in_progress", "in_development", "in_stage", "in_production"],
-    "in_stage":         ["todo", "in_progress", "in_development", "in_qa", "in_production"],
+    "todo":             ["in_progress"],
+    "in_progress":      ["todo", "in_development"],
+    "in_development":   ["in_progress", "in_qa"],
+    "in_qa":            ["in_development", "in_stage"],
+    "in_stage":         ["in_qa", "in_production"],
     "in_production":    [],  # terminal
     "rejected":         [],  # terminal
 }
