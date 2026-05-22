@@ -28,7 +28,7 @@ _KANBAN_STAGES = {"todo", "in_progress", "in_development", "in_qa", "in_stage", 
 
 _TRANSITIONS: dict[str, list[str]] = {
     "pending_approval": ["assigned", "rejected"],
-    "assigned":         ["todo", "rejected"],
+    "assigned":         ["todo", "in_progress", "rejected"],
     # Free movement within kanban — in_production is terminal
     "todo":             ["in_progress"],
     "in_progress":      ["todo", "in_development"],
