@@ -16,22 +16,28 @@ async def get_dashboard_stats(db: AsyncSession, org_id: uuid.UUID) -> dict:
     result = await db.execute(
         select(
             func.count().label("total"),
-            func.sum(case((TrackerTask.status == "in_progress", 1), else_=0)).label("in_progress"),
-            func.sum(case((TrackerTask.status == "completed", 1), else_=0)).label("done"),
+            func.sum(case((TrackerTask.status == "in_progress", 1), else_=0)).label("progress"),
+            func.sum(case((TrackerTask.status == "in_development", 1), else_=0)).label("development"),
+            func.sum(case((TrackerTask.status == "in_qa", 1), else_=0)).label("qa"),
+            func.sum(case((TrackerTask.status == "in_stage", 1), else_=0)).label("stage"),
+            func.sum(case((TrackerTask.status == "in_production", 1), else_=0)).label("done"),
             func.sum(case((TrackerTask.status == "pending_approval", 1), else_=0)).label("pending"),
             func.sum(case((
                 and_(
                     TrackerTask.deadline < now,
-                    TrackerTask.status.notin_(["completed", "rejected"]),
+                    TrackerTask.status.notin_(["in_production", "rejected"]),
                 ), 1), else_=0,
             )).label("overdue"),
         ).where(TrackerTask.organization_id == org_id)
     )
     row = result.one()
     return {
-        "total_tasks": row.total or 0,
-        "in_progress": row.in_progress or 0,
-        "done": row.done or 0,
-        "overdue": row.overdue or 0,
-        "pending": row.pending or 0,
+        "total":       row.total or 0,
+        "progress":    row.progress or 0,
+        "development": row.development or 0,
+        "qa":          row.qa or 0,
+        "stage":       row.stage or 0,
+        "done":        row.done or 0,
+        "pending":     row.pending or 0,
+        "overdue":     row.overdue or 0,
     }

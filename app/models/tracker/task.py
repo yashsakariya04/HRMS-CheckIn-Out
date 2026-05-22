@@ -24,7 +24,7 @@ class TrackerTask(Base):
         ),
         CheckConstraint(
             "status IN ('pending_approval','assigned','todo','in_progress',"
-            "'blocked','testing','completed','rejected')",
+            "'in_development','in_qa','in_stage','in_production','rejected')",
             name="chk_tracker_task_status",
         ),
         Index("idx_tracker_task_assigned_to", "assigned_to"),

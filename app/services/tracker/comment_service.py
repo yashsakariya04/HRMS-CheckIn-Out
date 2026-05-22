@@ -21,10 +21,6 @@ async def add_comment(
     payload: CommentCreate,
     user: Employee,
 ) -> TrackerComment:
-    # Only admin and superadmin can post comments
-    if user.role not in ("admin", "superadmin"):
-        raise HTTPException(403, "Only admins can add comments. Employees use the task description.")
-
     # Verify task exists in same org
     result = await db.execute(
         select(TrackerTask).where(
@@ -35,6 +31,10 @@ async def add_comment(
     task = result.scalars().first()
     if not task:
         raise HTTPException(404, "Task not found")
+
+    # Employees can only comment on tasks they are assigned to or created
+    if user.role == "employee" and task.assigned_to != user.id and task.created_by != user.id:
+        raise HTTPException(403, "You can only comment on tasks assigned to or created by you")
 
     comment = TrackerComment(
         task_id=task_id,
@@ -50,14 +50,21 @@ async def add_comment(
         user.id,
     )
 
-    # Notify assignee of admin comment
-    if task.assigned_to:
-        await notify(
-            db, task.assigned_to,
-            "New Comment from Admin",
-            f"Admin commented on your task: {task.title}",
-            task_id,
+    # Notify the other party
+    if user.role in ("admin", "superadmin") and task.assigned_to:
+        await notify(db, task.assigned_to, "New Comment",
+                     f"Admin commented on your task: {task.title}", task_id)
+    elif user.role == "employee":
+        admins_result = await db.execute(
+            select(Employee).where(
+                Employee.organization_id == user.organization_id,
+                Employee.role.in_(["admin", "superadmin"]),
+                Employee.is_active == True,
+            )
         )
+        for admin in admins_result.scalars().all():
+            await notify(db, admin.id, "New Comment from Employee",
+                         f"{user.full_name or user.email} commented on task: {task.title}", task_id)
 
     await db.commit()
     await db.refresh(comment)

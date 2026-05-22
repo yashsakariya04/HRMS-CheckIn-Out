@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import get_current_user
@@ -62,6 +62,21 @@ async def mark_all_read(
     )
     await db.commit()
     return {"ok": True}
+
+
+@router.delete("/{notification_id}", status_code=204)
+async def delete_notification(
+    notification_id: uuid.UUID,
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await db.execute(
+        delete(TrackerNotification).where(
+            TrackerNotification.id == notification_id,
+            TrackerNotification.user_id == user.id,
+        )
+    )
+    await db.commit()
 
 
 @router.websocket("/ws")
