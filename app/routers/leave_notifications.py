@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import get_current_user
@@ -55,6 +55,21 @@ async def mark_read(
     return {"ok": True}
 
 
+@router.delete("/{notification_id}", status_code=204)
+async def delete_leave_notification(
+    notification_id: uuid.UUID,
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await db.execute(
+        delete(LeaveNotification).where(
+            LeaveNotification.id == notification_id,
+            LeaveNotification.user_id == user.id,
+        )
+    )
+    await db.commit()
+
+
 @router.patch("/read-all")
 async def mark_all_read(
     user: Employee = Depends(get_current_user),
@@ -70,3 +85,4 @@ async def mark_all_read(
     )
     await db.commit()
     return {"ok": True}
+
