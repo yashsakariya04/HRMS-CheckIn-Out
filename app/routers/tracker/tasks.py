@@ -5,15 +5,15 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import get_current_user, require_admin
 from app.dependencies.database import get_db
 from app.models.employee import Employee
-from app.models.tracker.activity_log import TrackerActivityLog
-from app.schemas.tracker.task import BugReportCreate, AdminTaskCreate, TaskAssign, TaskStatusUpdate, TaskResponse
-from app.schemas.tracker.common import ActivityLogResponse
+from app.schemas.tracker.task import (
+    BugReportCreate, EmployeeTaskCreate, AdminTaskCreate,
+    TaskAssign, TaskStatusUpdate, TaskResponse, TaskFullDetail,
+)
 from app.services.tracker import task_service
 
 router = APIRouter(prefix="/tracker/tasks", tags=["Tracker — Tasks"])
@@ -27,6 +27,16 @@ async def create_bug_report(
 ):
     """Employee submits a bug report. Files uploaded separately via /attachments."""
     return await task_service.create_bug_report(db, payload, user)
+
+
+@router.post("/self", response_model=TaskResponse, status_code=201)
+async def create_self_task(
+    payload: EmployeeTaskCreate,
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Employee creates and self-assigns a task — goes directly to todo, no admin approval."""
+    return await task_service.create_self_assigned_task(db, payload, user)
 
 
 @router.post("/admin", response_model=TaskResponse, status_code=201)
@@ -55,13 +65,14 @@ async def list_tasks(
     return await task_service.get_tasks_for_employee(db, user, status)
 
 
-@router.get("/{task_id}", response_model=TaskResponse)
+@router.get("/{task_id}", response_model=TaskFullDetail)
 async def get_task(
     task_id: uuid.UUID,
     user: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await task_service.get_task_detail(db, task_id, user.organization_id)
+    """Returns full task detail including subtasks, comments, attachments, and timeline."""
+    return await task_service.get_task_full_detail(db, task_id, user.organization_id)
 
 
 @router.post("/{task_id}/assign", response_model=TaskResponse)
@@ -91,43 +102,3 @@ async def update_status(
     db: AsyncSession = Depends(get_db),
 ):
     return await task_service.update_status(db, task_id, payload, user)
-
-
-@router.get("/{task_id}/timeline", response_model=list[ActivityLogResponse])
-async def get_timeline(
-    task_id: uuid.UUID,
-    user: Employee = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    # Verify access
-    task = await task_service.get_task_detail(db, task_id, user.organization_id)
-    if user.role == "employee" and task.assigned_to != user.id and task.created_by != user.id:
-        from fastapi import HTTPException
-        raise HTTPException(403, "Access denied")
-
-    result = await db.execute(
-        select(TrackerActivityLog)
-        .where(TrackerActivityLog.task_id == task_id)
-        .order_by(TrackerActivityLog.created_at.asc())
-    )
-    logs = result.scalars().all()
-
-    # Enrich with performer names
-    from app.models.employee import Employee as Emp
-    out = []
-    for log in logs:
-        name = None
-        if log.performed_by:
-            r = await db.execute(select(Emp).where(Emp.id == log.performed_by))
-            emp = r.scalars().first()
-            name = emp.full_name or emp.email if emp else None
-        out.append(ActivityLogResponse(
-            id=log.id,
-            task_id=log.task_id,
-            action=log.action,
-            detail=log.detail,
-            performed_by=log.performed_by,
-            performer_name=name,
-            created_at=log.created_at,
-        ))
-    return out

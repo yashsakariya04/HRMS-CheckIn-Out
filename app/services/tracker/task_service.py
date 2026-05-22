@@ -1,6 +1,5 @@
 """
-Core task service — create, assign, status transitions, filters.
-All business rules and workflow enforcement live here.
+Core task service — create, assign, status transitions, filters, full detail.
 """
 import uuid
 from datetime import datetime, timezone
@@ -11,21 +10,33 @@ from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.employee import Employee
+from app.models.tracker.activity_log import TrackerActivityLog
+from app.models.tracker.attachment import TrackerAttachment
+from app.models.tracker.comment import TrackerComment
+from app.models.tracker.subtask import TrackerSubtask
 from app.models.tracker.task import TrackerTask
-from app.schemas.tracker.task import BugReportCreate, AdminTaskCreate, TaskAssign, TaskStatusUpdate
+from app.schemas.tracker.task import (
+    AdminTaskCreate, BugReportCreate, EmployeeTaskCreate,
+    TaskAssign, TaskStatusUpdate, TaskFullDetail,
+    CommentInDetail, AttachmentInDetail, ActivityInDetail, SubtaskInDetail,
+)
 from app.services.tracker.activity_service import log_activity
 from app.services.tracker.notification_service import notify
 
-# Valid forward/backward transitions per role
+# Kanban stages — free movement between any of these
+_KANBAN_STAGES = {"todo", "in_progress", "in_development", "in_qa", "in_stage", "in_production"}
+
 _TRANSITIONS: dict[str, list[str]] = {
     "pending_approval": ["assigned", "rejected"],
     "assigned":         ["todo", "rejected"],
-    "todo":             ["in_progress"],
-    "in_progress":      ["blocked", "testing"],
-    "blocked":          ["in_progress"],
-    "testing":          ["completed", "in_progress"],
-    "completed":        [],
-    "rejected":         [],
+    # Free movement within kanban — in_production is terminal
+    "todo":             ["in_progress", "in_development", "in_qa", "in_stage", "in_production"],
+    "in_progress":      ["todo", "in_development", "in_qa", "in_stage", "in_production"],
+    "in_development":   ["todo", "in_progress", "in_qa", "in_stage", "in_production"],
+    "in_qa":            ["todo", "in_progress", "in_development", "in_stage", "in_production"],
+    "in_stage":         ["todo", "in_progress", "in_development", "in_qa", "in_production"],
+    "in_production":    [],  # terminal
+    "rejected":         [],  # terminal
 }
 
 _STATUS_LABELS = {
@@ -33,9 +44,10 @@ _STATUS_LABELS = {
     "assigned":         "Assigned",
     "todo":             "To Do",
     "in_progress":      "In Progress",
-    "blocked":          "Blocked",
-    "testing":          "Testing",
-    "completed":        "Completed",
+    "in_development":   "In Development",
+    "in_qa":            "In QA",
+    "in_stage":         "In Stage",
+    "in_production":    "In Production",
     "rejected":         "Rejected",
 }
 
@@ -51,7 +63,7 @@ async def create_bug_report(
         title=payload.title,
         description=payload.description,
         request_type="bug",
-        priority="medium",   # admin sets priority when assigning
+        priority="medium",
         created_by=creator.id,
         status="pending_approval",
     )
@@ -62,7 +74,6 @@ async def create_bug_report(
         f"Bug reported by {creator.full_name or creator.email}",
         creator.id,
     )
-    # Notify admins of new bug report
     admins = await _get_org_admins(db, creator.organization_id)
     for admin in admins:
         await notify(
@@ -71,6 +82,35 @@ async def create_bug_report(
             f"{creator.full_name or creator.email} submitted a bug: {payload.title}",
             task.id,
         )
+    await db.commit()
+    await db.refresh(task)
+    return task
+
+
+async def create_self_assigned_task(
+    db: AsyncSession,
+    payload: EmployeeTaskCreate,
+    creator: Employee,
+) -> TrackerTask:
+    """Employee creates and self-assigns a task — goes directly to todo, no admin approval."""
+    task = TrackerTask(
+        organization_id=creator.organization_id,
+        title=payload.title,
+        description=payload.description,
+        request_type="task",
+        priority=payload.priority,
+        deadline=payload.deadline,
+        assigned_to=creator.id,
+        created_by=creator.id,
+        status="todo",
+    )
+    db.add(task)
+    await db.flush()
+    await log_activity(
+        db, task.id, "task_created",
+        f"Task self-assigned by {creator.full_name or creator.email}",
+        creator.id,
+    )
     await db.commit()
     await db.refresh(task)
     return task
@@ -114,28 +154,15 @@ async def create_and_assign_task(
         admin.id,
     )
 
-    # Persist admin comment if provided
     if payload.comment:
         from app.models.tracker.comment import TrackerComment
-        comment = TrackerComment(
-            task_id=task.id,
-            user_id=admin.id,
-            message=payload.comment,
-        )
-        db.add(comment)
+        db.add(TrackerComment(task_id=task.id, user_id=admin.id, message=payload.comment))
         await db.flush()
-        await log_activity(
-            db, task.id, "comment_added",
-            f"{admin.full_name or admin.email} added a comment",
-            admin.id,
-        )
+        await log_activity(db, task.id, "comment_added",
+                           f"{admin.full_name or admin.email} added a comment", admin.id)
 
-    await notify(
-        db, assignee.id,
-        "New Task Assigned",
-        f"You have been assigned: {task.title}",
-        task.id,
-    )
+    await notify(db, assignee.id, "New Task Assigned",
+                 f"You have been assigned: {task.title}", task.id)
     await db.commit()
     await db.refresh(task)
     return task
@@ -151,7 +178,6 @@ async def assign_task(
     if task.status not in ("pending_approval", "assigned"):
         raise HTTPException(400, "Task can only be assigned from pending_approval or assigned state")
 
-    # Verify assignee exists in same org
     result = await db.execute(
         select(Employee).where(
             Employee.id == payload.assigned_to,
@@ -176,28 +202,15 @@ async def assign_task(
         admin.id,
     )
 
-    # Persist admin comment on assignment if provided
     if payload.comment:
         from app.models.tracker.comment import TrackerComment
-        comment = TrackerComment(
-            task_id=task.id,
-            user_id=admin.id,
-            message=payload.comment,
-        )
-        db.add(comment)
+        db.add(TrackerComment(task_id=task.id, user_id=admin.id, message=payload.comment))
         await db.flush()
-        await log_activity(
-            db, task.id, "comment_added",
-            f"{admin.full_name or admin.email} added a comment on assignment",
-            admin.id,
-        )
+        await log_activity(db, task.id, "comment_added",
+                           f"{admin.full_name or admin.email} added a comment on assignment", admin.id)
 
-    await notify(
-        db, assignee.id,
-        "New Task Assigned",
-        f"You have been assigned: {task.title}",
-        task.id,
-    )
+    await notify(db, assignee.id, "New Task Assigned",
+                 f"You have been assigned: {task.title}", task.id)
     await db.commit()
     await db.refresh(task)
     return task
@@ -211,47 +224,27 @@ async def update_status(
 ) -> TrackerTask:
     task = await _get_task(db, task_id, user.organization_id)
 
-    # Employees can only update their own assigned tasks
-    if user.role == "employee" and task.assigned_to != user.id:
-        raise HTTPException(403, "You can only update tasks assigned to you")
+    if user.role == "employee" and task.assigned_to != user.id and task.created_by != user.id:
+        raise HTTPException(403, "You can only update tasks assigned to or created by you")
 
     allowed = _TRANSITIONS.get(task.status, [])
     if payload.status not in allowed:
         raise HTTPException(
             400,
-            f"Cannot transition from '{task.status}' to '{payload.status}'. "
-            f"Allowed: {allowed}",
+            f"Cannot transition from '{task.status}' to '{payload.status}'. Allowed: {allowed}",
         )
-
-    # Blocked requires a reason
-    if payload.status == "blocked" and not payload.blocked_reason:
-        raise HTTPException(400, "blocked_reason is required when marking a task as blocked")
 
     old_status = task.status
     task.status = payload.status
-    task.blocked_reason = payload.blocked_reason if payload.status == "blocked" else None
+    task.blocked_reason = None  # removed blocked concept
     task.updated_at = datetime.now(timezone.utc)
 
-    detail = (
-        f"Status changed from {_STATUS_LABELS[old_status]} to {_STATUS_LABELS[payload.status]}"
+    await log_activity(
+        db, task.id, "status_changed",
+        f"Status changed from {_STATUS_LABELS[old_status]} to {_STATUS_LABELS[payload.status]}",
+        user.id,
     )
-    if payload.status == "blocked":
-        detail += f" — Reason: {payload.blocked_reason}"
 
-    await log_activity(db, task.id, "status_changed", detail, user.id)
-
-    # Notify admin when task is blocked
-    if payload.status == "blocked":
-        admins = await _get_org_admins(db, user.organization_id)
-        for admin in admins:
-            await notify(
-                db, admin.id,
-                "Task Blocked",
-                f"Task '{task.title}' was marked blocked: {payload.blocked_reason}",
-                task.id,
-            )
-
-    # Notify assignee when admin changes status
     if user.role in ("admin", "superadmin") and task.assigned_to:
         await notify(
             db, task.assigned_to,
@@ -265,11 +258,7 @@ async def update_status(
     return task
 
 
-async def delete_task(
-    db: AsyncSession,
-    task_id: uuid.UUID,
-    admin: Employee,
-) -> None:
+async def delete_task(db: AsyncSession, task_id: uuid.UUID, admin: Employee) -> None:
     task = await _get_task(db, task_id, admin.organization_id)
     await db.delete(task)
     await db.commit()
@@ -280,13 +269,9 @@ async def get_tasks_for_employee(
     user: Employee,
     status: Optional[str] = None,
 ) -> list[TrackerTask]:
-    ownership = or_(
-        TrackerTask.assigned_to == user.id,
-        TrackerTask.created_by == user.id,
-    )
     conditions = [
         TrackerTask.organization_id == user.organization_id,
-        ownership,
+        or_(TrackerTask.assigned_to == user.id, TrackerTask.created_by == user.id),
     ]
     if status:
         conditions.append(TrackerTask.status == status)
@@ -314,7 +299,7 @@ async def get_tasks_for_admin(
     if overdue_only:
         now = datetime.now(timezone.utc)
         conditions.append(TrackerTask.deadline < now)
-        conditions.append(TrackerTask.status.notin_(["completed", "rejected"]))
+        conditions.append(TrackerTask.status.notin_(["in_production", "rejected"]))
 
     result = await db.execute(
         select(TrackerTask).where(and_(*conditions)).order_by(TrackerTask.created_at.desc())
@@ -322,12 +307,96 @@ async def get_tasks_for_admin(
     return result.scalars().all()
 
 
-async def get_task_detail(
+async def get_task_full_detail(
     db: AsyncSession,
     task_id: uuid.UUID,
     org_id: uuid.UUID,
-) -> TrackerTask:
-    return await _get_task(db, task_id, org_id)
+) -> TaskFullDetail:
+    """Return a task with all related data: subtasks, comments, attachments, timeline."""
+    task = await _get_task(db, task_id, org_id)
+
+    # Resolve names
+    assignee_name = await _get_employee_name(db, task.assigned_to)
+    creator_name  = await _get_employee_name(db, task.created_by)
+
+    # Subtasks
+    sub_result = await db.execute(
+        select(TrackerSubtask)
+        .where(TrackerSubtask.task_id == task_id)
+        .order_by(TrackerSubtask.created_at.asc())
+    )
+    subtasks = [
+        SubtaskInDetail(
+            id=s.id, title=s.title, is_done=s.is_done,
+            created_by=s.created_by, created_at=s.created_at,
+        )
+        for s in sub_result.scalars().all()
+    ]
+
+    # Comments
+    com_result = await db.execute(
+        select(TrackerComment)
+        .where(TrackerComment.task_id == task_id)
+        .order_by(TrackerComment.created_at.asc())
+    )
+    comments = []
+    for c in com_result.scalars().all():
+        name = await _get_employee_name(db, c.user_id)
+        comments.append(CommentInDetail(
+            id=c.id, user_id=c.user_id, author_name=name,
+            message=c.message, created_at=c.created_at,
+        ))
+
+    # Attachments
+    att_result = await db.execute(
+        select(TrackerAttachment)
+        .where(TrackerAttachment.task_id == task_id)
+        .order_by(TrackerAttachment.created_at.asc())
+    )
+    attachments = [
+        AttachmentInDetail(
+            id=a.id, file_url=a.file_url, original_filename=a.original_filename,
+            file_type=a.file_type, file_size_bytes=a.file_size_bytes,
+            uploaded_by=a.uploaded_by, created_at=a.created_at,
+        )
+        for a in att_result.scalars().all()
+    ]
+
+    # Timeline
+    tl_result = await db.execute(
+        select(TrackerActivityLog)
+        .where(TrackerActivityLog.task_id == task_id)
+        .order_by(TrackerActivityLog.created_at.asc())
+    )
+    timeline = []
+    for log in tl_result.scalars().all():
+        name = await _get_employee_name(db, log.performed_by) if log.performed_by else None
+        timeline.append(ActivityInDetail(
+            id=log.id, action=log.action, detail=log.detail,
+            performed_by=log.performed_by, performer_name=name,
+            created_at=log.created_at,
+        ))
+
+    return TaskFullDetail(
+        id=task.id,
+        title=task.title,
+        description=task.description,
+        request_type=task.request_type,
+        priority=task.priority,
+        status=task.status,
+        deadline=task.deadline,
+        blocked_reason=task.blocked_reason,
+        assigned_to=task.assigned_to,
+        created_by=task.created_by,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+        assignee_name=assignee_name,
+        creator_name=creator_name,
+        subtasks=subtasks,
+        comments=comments,
+        attachments=attachments,
+        timeline=timeline,
+    )
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -354,3 +423,11 @@ async def _get_org_admins(db: AsyncSession, org_id: uuid.UUID) -> list[Employee]
         )
     )
     return result.scalars().all()
+
+
+async def _get_employee_name(db: AsyncSession, emp_id: uuid.UUID | None) -> str | None:
+    if not emp_id:
+        return None
+    result = await db.execute(select(Employee).where(Employee.id == emp_id))
+    emp = result.scalars().first()
+    return (emp.full_name or emp.email) if emp else None

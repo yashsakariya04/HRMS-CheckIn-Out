@@ -54,6 +54,7 @@ from app.routers.tracker import extensions as tracker_extensions
 from app.routers.tracker import files as tracker_files
 from app.routers.tracker import notifications as tracker_notifications
 from app.routers.tracker import analytics as tracker_analytics
+from app.routers.tracker import subtasks as tracker_subtasks
 from app.routers import leave_notifications as leave_notifications_router
 
 
@@ -117,6 +118,7 @@ app.include_router(tracker_extensions.router,   prefix="/api/v1")  # Tracker: ex
 app.include_router(tracker_files.router,        prefix="/api/v1")  # Tracker: file uploads
 app.include_router(tracker_notifications.router,prefix="/api/v1")  # Tracker: notifications
 app.include_router(tracker_analytics.router,    prefix="/api/v1")  # Tracker: analytics
+app.include_router(tracker_subtasks.router,     prefix="/api/v1")  # Tracker: subtasks
 app.include_router(leave_notifications_router.router, prefix="/api/v1")  # Leave notifications
 
 

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies.auth import get_current_user, require_admin
+from app.dependencies.auth import get_current_user
 from app.dependencies.database import get_db
 from app.models.employee import Employee
 from app.schemas.tracker.comment import CommentCreate, CommentResponse
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/tracker/tasks/{task_id}/comments", tags=["Tracker â€
 async def add_comment(
     task_id: uuid.UUID,
     payload: CommentCreate,
-    user: Employee = Depends(require_admin),   # admin/superadmin only
+    user: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     comment = await comment_service.add_comment(db, task_id, payload, user)
