@@ -20,6 +20,7 @@ import httpx
 from app.core.config import settings
 from app.dependencies.auth import get_current_user
 from app.dependencies.database import get_db
+from app.dependencies.redis import get_redis
 from app.schemas.auth import (
     ForgotPasswordRequest, GoogleLoginRequest, LoginRequest,
     RefreshRequest, ResetPasswordRequest, TokenResponse, VerifyOTPRequest,
@@ -54,12 +55,12 @@ async def refresh_route(data: RefreshRequest, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/logout")
-async def logout_route(data: RefreshRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Revoke the refresh token — effectively logs the employee out.
-    After this, the refresh token cannot be used to get new access tokens.
-    """
-    await logout(data.refresh_token, db)
+async def logout_route(
+    data: RefreshRequest,
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+):
+    await logout(data.refresh_token, db, redis)
     return {"message": "Logged out"}
 
 

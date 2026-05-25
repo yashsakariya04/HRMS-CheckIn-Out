@@ -42,23 +42,13 @@ router = APIRouter(prefix="/balances", tags=["Leave Balances"])
 
 
 async def _build_balance_response(db, employee_id) -> List[dict]:
-    """
-    Merge ledger rows (for historical fields) with the real-time closing
-    balance (for the closing_balance field shown to users).
-
-    If the employee has no ledger rows yet (brand-new employee who hasn't
-    gone through a rollover), compute_realtime_balance() still returns
-    sensible defaults (casual = 1.0 first month accrual, comp_off = 0).
-    In that case we return a synthetic row so the frontend always has
-    something to display.
-    """
+    # Sequential — SQLAlchemy AsyncSession does not allow concurrent queries on the same session
     rows = await get_balance_rows(db, employee_id)
     realtime = await compute_realtime_balance(db, employee_id)
 
     if rows:
-        result = []
-        for row in rows:
-            result.append({
+        return [
+            {
                 "leave_type": row.leave_type,
                 "year": row.year,
                 "month": row.month,
@@ -66,16 +56,15 @@ async def _build_balance_response(db, employee_id) -> List[dict]:
                 "accrued": float(row.accrued),
                 "used": float(row.used),
                 "adjusted": float(row.adjusted),
-                # Replace ledger closing with real-time value
                 "closing_balance": (
                     realtime["casual_balance"]
                     if row.leave_type == "casual"
                     else realtime["comp_off_balance"]
                 ),
-            })
-        return result
+            }
+            for row in rows
+        ]
 
-    # Brand-new employee: no ledger rows yet — return synthetic rows
     from datetime import date
     today = date.today()
     return [

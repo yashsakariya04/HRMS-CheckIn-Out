@@ -41,7 +41,7 @@ from datetime import date, datetime, timezone, timedelta
 from typing import List, Set
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.attendance_session import AttendanceSession
@@ -472,19 +472,21 @@ async def approve_request(
         pass
 
     elif req.request_type == "wfh":
-        # Mark every day in the range as WFH on the attendance session.
+        # Bulk fetch all sessions in the date range, then update in Python
+        wfh_dates = []
         current = req.from_date
         while current <= req.to_date:
-            result = await db.execute(
-                select(AttendanceSession).where(
-                    AttendanceSession.employee_id == req.employee_id,
-                    AttendanceSession.session_date == current,
-                )
-            )
-            session = result.scalars().first()
-            if session:
-                session.work_mode = "wfh"
+            wfh_dates.append(current)
             current += timedelta(days=1)
+
+        sessions_result = await db.execute(
+            select(AttendanceSession).where(
+                AttendanceSession.employee_id == req.employee_id,
+                AttendanceSession.session_date.in_(wfh_dates),
+            )
+        )
+        for session in sessions_result.scalars().all():
+            session.work_mode = "wfh"
 
     elif req.request_type == "missing_time":
         if not req.linked_session_id:

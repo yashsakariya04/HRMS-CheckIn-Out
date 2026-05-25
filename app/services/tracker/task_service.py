@@ -315,67 +315,77 @@ async def get_task_full_detail(
     """Return a task with all related data: subtasks, comments, attachments, timeline."""
     task = await _get_task(db, task_id, org_id)
 
-    # Resolve names
-    assignee_name = await _get_employee_name(db, task.assigned_to)
-    creator_name  = await _get_employee_name(db, task.created_by)
-
-    # Subtasks
+    # Fetch all related rows sequentially (SQLAlchemy AsyncSession does not allow concurrent queries on the same session)
     sub_result = await db.execute(
         select(TrackerSubtask)
         .where(TrackerSubtask.task_id == task_id)
         .order_by(TrackerSubtask.created_at.asc())
     )
-    subtasks = [
-        SubtaskInDetail(
-            id=s.id, title=s.title, is_done=s.is_done,
-            created_by=s.created_by, created_at=s.created_at,
-        )
-        for s in sub_result.scalars().all()
-    ]
-
-    # Comments
     com_result = await db.execute(
         select(TrackerComment)
         .where(TrackerComment.task_id == task_id)
         .order_by(TrackerComment.created_at.asc())
     )
-    comments = []
-    for c in com_result.scalars().all():
-        name = await _get_employee_name(db, c.user_id)
-        comments.append(CommentInDetail(
-            id=c.id, user_id=c.user_id, author_name=name,
-            message=c.message, created_at=c.created_at,
-        ))
-
-    # Attachments
     att_result = await db.execute(
         select(TrackerAttachment)
         .where(TrackerAttachment.task_id == task_id)
         .order_by(TrackerAttachment.created_at.asc())
     )
+    tl_result = await db.execute(
+        select(TrackerActivityLog)
+        .where(TrackerActivityLog.task_id == task_id)
+        .order_by(TrackerActivityLog.created_at.asc())
+    )
+
+    subtask_rows  = sub_result.scalars().all()
+    comment_rows  = com_result.scalars().all()
+    attach_rows   = att_result.scalars().all()
+    timeline_rows = tl_result.scalars().all()
+
+    # Collect all unique employee IDs across task + comments + timeline in one batch
+    emp_ids = {
+        uid for uid in (
+            [task.assigned_to, task.created_by]
+            + [c.user_id for c in comment_rows]
+            + [l.performed_by for l in timeline_rows if l.performed_by]
+        ) if uid
+    }
+    name_map = await _get_employee_names(db, emp_ids)
+
+    subtasks = [
+        SubtaskInDetail(
+            id=s.id, title=s.title, is_done=s.is_done,
+            created_by=s.created_by, created_at=s.created_at,
+        )
+        for s in subtask_rows
+    ]
+
+    comments = [
+        CommentInDetail(
+            id=c.id, user_id=c.user_id, author_name=name_map.get(c.user_id),
+            message=c.message, created_at=c.created_at,
+        )
+        for c in comment_rows
+    ]
+
     attachments = [
         AttachmentInDetail(
             id=a.id, file_url=a.file_url, original_filename=a.original_filename,
             file_type=a.file_type, file_size_bytes=a.file_size_bytes,
             uploaded_by=a.uploaded_by, created_at=a.created_at,
         )
-        for a in att_result.scalars().all()
+        for a in attach_rows
     ]
 
-    # Timeline
-    tl_result = await db.execute(
-        select(TrackerActivityLog)
-        .where(TrackerActivityLog.task_id == task_id)
-        .order_by(TrackerActivityLog.created_at.asc())
-    )
-    timeline = []
-    for log in tl_result.scalars().all():
-        name = await _get_employee_name(db, log.performed_by) if log.performed_by else None
-        timeline.append(ActivityInDetail(
+    timeline = [
+        ActivityInDetail(
             id=log.id, action=log.action, detail=log.detail,
-            performed_by=log.performed_by, performer_name=name,
+            performed_by=log.performed_by,
+            performer_name=name_map.get(log.performed_by) if log.performed_by else None,
             created_at=log.created_at,
-        ))
+        )
+        for log in timeline_rows
+    ]
 
     return TaskFullDetail(
         id=task.id,
@@ -390,8 +400,8 @@ async def get_task_full_detail(
         created_by=task.created_by,
         created_at=task.created_at,
         updated_at=task.updated_at,
-        assignee_name=assignee_name,
-        creator_name=creator_name,
+        assignee_name=name_map.get(task.assigned_to),
+        creator_name=name_map.get(task.created_by),
         subtasks=subtasks,
         comments=comments,
         attachments=attachments,
@@ -425,9 +435,14 @@ async def _get_org_admins(db: AsyncSession, org_id: uuid.UUID) -> list[Employee]
     return result.scalars().all()
 
 
-async def _get_employee_name(db: AsyncSession, emp_id: uuid.UUID | None) -> str | None:
-    if not emp_id:
-        return None
-    result = await db.execute(select(Employee).where(Employee.id == emp_id))
-    emp = result.scalars().first()
-    return (emp.full_name or emp.email) if emp else None
+async def _get_employee_names(
+    db: AsyncSession, emp_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, str | None]:
+    """Batch-fetch display names for a set of employee IDs in one query."""
+    if not emp_ids:
+        return {}
+    result = await db.execute(select(Employee).where(Employee.id.in_(emp_ids)))
+    return {
+        emp.id: (emp.full_name or emp.email)
+        for emp in result.scalars().all()
+    }
