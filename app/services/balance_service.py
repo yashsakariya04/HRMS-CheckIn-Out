@@ -38,8 +38,8 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
     today = date.today()
     cur_year, cur_month = today.year, today.month
 
-    # ── 1. Latest ledger row per leave type ───────────────────────────
-    result = await db.execute(
+    # ── 1. Ledger rows then employee joined_on (sequential — same session) ──
+    ledger_result = await db.execute(
         select(EmployeeLeaveBalance)
         .where(EmployeeLeaveBalance.employee_id == employee_id)
         .order_by(
@@ -48,7 +48,11 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
             EmployeeLeaveBalance.month.desc(),
         )
     )
-    rows = result.scalars().all()
+    emp_result = await db.execute(
+        select(Employee.joined_on).where(Employee.id == employee_id)
+    )
+    rows = ledger_result.scalars().all()
+    joined_on = emp_result.scalar_one_or_none()
 
     seen: set = set()
     latest: dict[str, EmployeeLeaveBalance] = {}
@@ -60,11 +64,6 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
     casual_row = latest.get("casual")
     comp_row = latest.get("comp_off")
 
-    # ── Fetch employee's joined_on for probation check ─────────────────
-    emp_result = await db.execute(
-        select(Employee.joined_on).where(Employee.id == employee_id)
-    )
-    joined_on = emp_result.scalar_one_or_none()
     in_probation = _is_in_probation(joined_on, cur_year, cur_month)
     simulated_accrual = 0.0 if in_probation else 1.0
 
