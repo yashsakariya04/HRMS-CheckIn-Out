@@ -4,7 +4,12 @@ import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _end_of_day(dt: datetime) -> datetime:
+    """Normalize deadline to 23:59:59 of the given date, preserving tzinfo."""
+    return dt.replace(hour=23, minute=59, second=59, microsecond=0)
 
 
 Priority   = Literal["low", "medium", "high", "urgent"]
@@ -27,6 +32,11 @@ class EmployeeTaskCreate(BaseModel):
     priority: Priority = "medium"
     deadline: datetime
 
+    @field_validator("deadline", mode="after")
+    @classmethod
+    def normalize_deadline(cls, v: datetime) -> datetime:
+        return _end_of_day(v)
+
 
 # ── Admin: create & directly assign a custom task ────────────────────────────
 class AdminTaskCreate(BaseModel):
@@ -37,6 +47,11 @@ class AdminTaskCreate(BaseModel):
     deadline: datetime
     comment: Optional[str] = Field(None, max_length=2000)
 
+    @field_validator("deadline", mode="after")
+    @classmethod
+    def normalize_deadline(cls, v: datetime) -> datetime:
+        return _end_of_day(v)
+
 
 # ── Admin: assign an existing pending bug to an employee ─────────────────────
 class TaskAssign(BaseModel):
@@ -44,6 +59,11 @@ class TaskAssign(BaseModel):
     priority: Priority = "medium"
     deadline: Optional[datetime] = None
     comment: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("deadline", mode="after")
+    @classmethod
+    def normalize_deadline(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return _end_of_day(v) if v is not None else None
 
 
 class TaskStatusUpdate(BaseModel):
