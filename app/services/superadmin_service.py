@@ -36,27 +36,23 @@ async def list_all_users(db) -> list:
     ]
 
 
-async def promote_to_admin(employee_id: UUID, db, redis=None) -> dict:
+async def promote_to_admin(employee_id: UUID, db) -> dict:
     """Set role = 'admin' for the given employee."""
     emp = await _get_non_superadmin(employee_id, db)
     if emp.role == "admin":
         raise HTTPException(status_code=400, detail="Employee is already an admin")
     emp.role = "admin"
     await db.commit()
-    if redis:
-        await redis.delete(f"emp:{employee_id}")
     return {"message": f"{emp.email} promoted to admin"}
 
 
-async def demote_to_employee(employee_id: UUID, db, redis=None) -> dict:
+async def demote_to_employee(employee_id: UUID, db) -> dict:
     """Set role = 'employee' for the given admin."""
     emp = await _get_non_superadmin(employee_id, db)
     if emp.role == "employee":
         raise HTTPException(status_code=400, detail="User is already an employee")
     emp.role = "employee"
     await db.commit()
-    if redis:
-        await redis.delete(f"emp:{employee_id}")
     return {"message": f"{emp.email} demoted to employee"}
 
 

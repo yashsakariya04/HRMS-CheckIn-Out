@@ -27,7 +27,7 @@ import string
 from fastapi import HTTPException
 from google.auth.transport import requests
 from google.oauth2 import id_token
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -125,31 +125,37 @@ async def refresh(refresh_token: str, db: AsyncSession) -> dict:
     return {"access_token": access_token, "refresh_token": refresh_token}
 
 
-async def logout(refresh_token: str, db: AsyncSession, redis=None) -> None:
+async def logout(refresh_token: str, db: AsyncSession) -> None:
+    """
+    Revoke a refresh token — effectively logs the employee out.
+
+    Marks the token as is_revoked = True so it cannot be used again.
+
+    Args:
+        refresh_token: The raw refresh token string from the client.
+        db:            Async database session.
+
+    Raises:
+        400 — Invalid token format.
+        401 — Token not found or already revoked.
+    """
     try:
         token_id, _ = refresh_token.split(".")
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid token format")
 
-    # Use UPDATE directly — no SELECT round-trip needed
     result = await db.execute(
-        update(RefreshToken)
-        .where(
-            RefreshToken.token_id == token_id,
-            RefreshToken.is_revoked == False,  # noqa: E712
+        select(RefreshToken).where(
+            and_(RefreshToken.token_id == token_id, RefreshToken.is_revoked == False)  # noqa: E712
         )
-        .values(is_revoked=True)
-        .returning(RefreshToken.employee_id)
     )
-    row = result.first()
-    if not row:
+    db_token = result.scalars().first()
+
+    if not db_token:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+    db_token.is_revoked = True
     await db.commit()
-
-    # Bust employee cache so a logged-out user can't ride the Redis cache
-    if redis:
-        await redis.delete(f"emp:{row.employee_id}")
 
 
 async def google_login(id_token_str: str, db: AsyncSession) -> dict:

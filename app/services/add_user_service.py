@@ -148,18 +148,47 @@ async def change_password(user: Employee, data, db) -> dict:
     return {"message": "Password updated successfully"}
 
 
-async def update_profile(user: Employee, data, db, redis=None) -> dict:
+async def update_profile(user: Employee, data, db) -> dict:
+    """
+    Update the employee's own profile (name and/or photo URL).
+
+    Only updates fields that are provided (non-None).
+
+    Args:
+        user: The currently authenticated Employee ORM object.
+        data: UpdateProfileRequest with full_name and optional photo_url.
+        db:   Async database session.
+
+    Returns:
+        Success message dict.
+    """
     if data.full_name:
         user.full_name = data.full_name
     if data.photo_url:
         user.photo_url = data.photo_url
+
     await db.commit()
-    if redis:
-        await redis.delete(f"emp:{user.id}")
     return {"message": "Profile updated"}
 
 
-async def delete_employee(employee_id: UUID, db, redis=None) -> dict:
+async def delete_employee(employee_id: UUID, db) -> dict:
+    """
+    Soft-delete an employee by setting is_active = False.
+
+    The employee's data (attendance, tasks, leave history) is preserved.
+    They can no longer log in after deactivation.
+
+    Args:
+        employee_id: UUID of the employee to deactivate.
+        db:          Async database session.
+
+    Returns:
+        Success message dict.
+
+    Raises:
+        404 — Employee not found.
+        400 — Employee is already deactivated.
+    """
     result = await db.execute(select(Employee).where(Employee.id == employee_id))
     employee = result.scalars().first()
 
@@ -170,6 +199,4 @@ async def delete_employee(employee_id: UUID, db, redis=None) -> dict:
 
     employee.is_active = False
     await db.commit()
-    if redis:
-        await redis.delete(f"emp:{employee_id}")
     return {"message": "Employee deactivated successfully"}

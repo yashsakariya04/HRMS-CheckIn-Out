@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import get_current_user, require_admin
 from app.dependencies.database import get_db
-from app.dependencies.redis import get_redis
 from app.jobs.leave_rollover import run_leave_rollover
 from app.schemas.add_user import ChangePasswordRequest, CreateEmployeeRequest, EmployeeListItem, UpdateProfileRequest
 from app.services.add_user_service import change_password, create_employee, delete_employee, list_employees, update_profile
@@ -71,9 +70,12 @@ async def update_profile_route(
     data: UpdateProfileRequest,
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    redis=Depends(get_redis),
 ):
-    return await update_profile(user, data, db, redis)
+    """
+    Any authenticated employee can update their own display name and photo URL.
+    Other fields (email, role, department) require admin action.
+    """
+    return await update_profile(user, data, db)
 
 
 @router.delete("/{employee_id}")
@@ -81,9 +83,14 @@ async def remove_employee(
     employee_id: UUID,
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
-    redis=Depends(get_redis),
 ):
-    return await delete_employee(employee_id, db, redis)
+    """
+    Admin only: deactivate an employee (soft delete — sets is_active = False).
+
+    The employee's data is preserved. They can no longer log in.
+    Returns 404 if not found, 400 if already deactivated.
+    """
+    return await delete_employee(employee_id, db)
 
 
 @router.post("/trigger-rollover")

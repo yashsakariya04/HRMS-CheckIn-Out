@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import require_superadmin
 from app.dependencies.database import get_db
-from app.dependencies.redis import get_redis
 from app.schemas.add_user import EmployeeListItem
 from app.services.superadmin_service import demote_to_employee, list_all_users, promote_to_admin
 
@@ -37,10 +36,9 @@ async def promote_employee(
     employee_id: UUID,
     db: AsyncSession = Depends(get_db),
     _=Depends(require_superadmin),
-    redis=Depends(get_redis),
 ):
     """Superadmin only: grant admin role to an employee."""
-    return await promote_to_admin(employee_id, db, redis)
+    return await promote_to_admin(employee_id, db)
 
 
 @router.patch("/users/{employee_id}/demote")
@@ -48,7 +46,6 @@ async def demote_employee(
     employee_id: UUID,
     db: AsyncSession = Depends(get_db),
     _=Depends(require_superadmin),
-    redis=Depends(get_redis),
 ):
     """Superadmin only: revoke admin role, revert to employee."""
-    return await demote_to_employee(employee_id, db, redis)
+    return await demote_to_employee(employee_id, db)

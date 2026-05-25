@@ -26,11 +26,10 @@ API base URL: /api/v1
 Interactive docs: /docs  (Swagger UI — open in browser when server is running)
 """
 
-import time
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
