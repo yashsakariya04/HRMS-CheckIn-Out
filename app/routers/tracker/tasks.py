@@ -11,7 +11,7 @@ from app.dependencies.auth import get_current_user, require_admin
 from app.dependencies.database import get_db
 from app.models.employee import Employee
 from app.schemas.tracker.task import (
-    TaskCreate, TaskAddMembers, TaskAssign, TaskStatusUpdate,
+    TaskCreate, TaskAddMembers, TaskAssign, TaskStatusUpdate, TaskDescriptionUpdate,
     TaskResponse, TaskFullDetail,
 )
 from app.services.tracker import task_service
@@ -86,6 +86,16 @@ async def delete_task(
     db: AsyncSession = Depends(get_db),
 ):
     await task_service.delete_task(db, task_id, admin)
+
+
+@router.patch("/{task_id}/description", response_model=TaskResponse)
+async def update_description(
+    task_id: uuid.UUID,
+    payload: TaskDescriptionUpdate,
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await task_service.update_description(db, task_id, payload.description, user)
 
 
 @router.patch("/{task_id}/status", response_model=TaskResponse)
