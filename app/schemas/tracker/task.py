@@ -56,6 +56,10 @@ class TaskStatusUpdate(BaseModel):
     status: TaskStatus
 
 
+class TaskDescriptionUpdate(BaseModel):
+    description: Optional[str] = None
+
+
 class TaskResponse(BaseModel):
     id: uuid.UUID
     title: str

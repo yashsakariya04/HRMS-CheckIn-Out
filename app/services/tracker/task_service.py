@@ -283,6 +283,31 @@ async def update_status(
     return _task_to_response(task)
 
 
+async def update_description(
+    db: AsyncSession,
+    task_id: uuid.UUID,
+    description: str | None,
+    user: Employee,
+) -> dict:
+    task = await _get_task(db, task_id, user.organization_id)
+
+    member_ids = {m.employee_id for m in task.members}
+    if user.role == "employee" and user.id not in member_ids and task.created_by != user.id:
+        raise HTTPException(403, "You can only edit tasks you are a member of or created")
+
+    task.description = description
+    task.updated_at = datetime.now(timezone.utc)
+
+    await log_activity(
+        db, task.id, "description_updated",
+        f"{user.full_name or user.email} updated the description",
+        user.id,
+    )
+    await db.commit()
+    await db.refresh(task)
+    return _task_to_response(task)
+
+
 async def delete_task(db: AsyncSession, task_id: uuid.UUID, admin: Employee) -> None:
     task = await _get_task(db, task_id, admin.organization_id)
     await db.delete(task)
