@@ -11,42 +11,37 @@ from app.dependencies.auth import get_current_user, require_admin
 from app.dependencies.database import get_db
 from app.models.employee import Employee
 from app.schemas.tracker.task import (
-    BugReportCreate, EmployeeTaskCreate, AdminTaskCreate,
-    TaskAssign, TaskStatusUpdate, TaskResponse, TaskFullDetail,
+    TaskCreate, TaskAddMembers, TaskAssign, TaskStatusUpdate,
+    TaskResponse, TaskFullDetail,
 )
 from app.services.tracker import task_service
 
 router = APIRouter(prefix="/tracker/tasks", tags=["Tracker — Tasks"])
 
 
-@router.post("/bug", response_model=TaskResponse, status_code=201)
-async def create_bug_report(
-    payload: BugReportCreate,
-    user: Employee = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Employee submits a bug report. Files uploaded separately via /attachments."""
-    return await task_service.create_bug_report(db, payload, user)
-
-
-@router.post("/self", response_model=TaskResponse, status_code=201)
-async def create_self_task(
-    payload: EmployeeTaskCreate,
-    user: Employee = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Employee creates and self-assigns a task — goes directly to todo, no admin approval."""
-    return await task_service.create_self_assigned_task(db, payload, user)
-
-
 @router.post("/admin", response_model=TaskResponse, status_code=201)
-async def admin_create_task(
-    payload: AdminTaskCreate,
-    admin: Employee = Depends(require_admin),
+async def create_task(
+    payload: TaskCreate,
+    user: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Admin creates a custom task and directly assigns it to an employee."""
-    return await task_service.create_and_assign_task(db, payload, admin)
+    """
+    Create a task. Works for both admin and employee.
+    - assigned_to=[]  → self-assign, status=todo
+    - assigned_to=[ids] → assign to others (any user can do this), status=assigned
+    """
+    return await task_service.create_task(db, payload, user)
+
+
+@router.post("/{task_id}/members", response_model=TaskResponse)
+async def add_members(
+    task_id: uuid.UUID,
+    payload: TaskAddMembers,
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add new members to an existing task."""
+    return await task_service.add_task_members(db, task_id, payload, user)
 
 
 @router.get("", response_model=list[TaskResponse])
@@ -71,7 +66,6 @@ async def get_task(
     user: Employee = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Returns full task detail including subtasks, comments, attachments, and timeline."""
     return await task_service.get_task_full_detail(db, task_id, user.organization_id)
 
 

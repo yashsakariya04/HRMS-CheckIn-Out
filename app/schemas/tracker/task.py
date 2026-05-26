@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field, field_validator
 
 
 def _end_of_day(dt: datetime) -> datetime:
-    """Normalize deadline to 23:59:59 of the given date, preserving tzinfo."""
     return dt.replace(hour=23, minute=59, second=59, microsecond=0)
 
 
@@ -19,43 +18,30 @@ TaskStatus = Literal[
 ]
 
 
-# ── Employee: submit a bug report ─────────────────────────────────────────────
-class BugReportCreate(BaseModel):
-    title: str = Field(..., min_length=3, max_length=500)
-    description: Optional[str] = None
-
-
-# ── Employee: self-assign a task (no admin approval needed) ───────────────────
-class EmployeeTaskCreate(BaseModel):
+# ── Unified task creation (admin + employee) ──────────────────────────────────
+class TaskCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=500)
     description: Optional[str] = None
     priority: Priority = "medium"
-    deadline: datetime
-
-    @field_validator("deadline", mode="after")
-    @classmethod
-    def normalize_deadline(cls, v: datetime) -> datetime:
-        return _end_of_day(v)
-
-
-# ── Admin: create & directly assign a custom task ────────────────────────────
-class AdminTaskCreate(BaseModel):
-    title: str = Field(..., min_length=3, max_length=500)
-    description: Optional[str] = None
-    assigned_to: uuid.UUID
-    priority: Priority = "medium"
-    deadline: datetime
+    deadline: Optional[datetime] = None
+    # Empty list = self-assign; one or more UUIDs = assign to others
+    assigned_to: list[uuid.UUID] = Field(default_factory=list)
     comment: Optional[str] = Field(None, max_length=2000)
 
     @field_validator("deadline", mode="after")
     @classmethod
-    def normalize_deadline(cls, v: datetime) -> datetime:
-        return _end_of_day(v)
+    def normalize_deadline(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return _end_of_day(v) if v is not None else None
 
 
-# ── Admin: assign an existing pending bug to an employee ─────────────────────
+# ── Add members to an existing task ──────────────────────────────────────────
+class TaskAddMembers(BaseModel):
+    employee_ids: list[uuid.UUID] = Field(..., min_length=1)
+
+
+# ── Admin: assign an existing pending bug to employees ────────────────────────
 class TaskAssign(BaseModel):
-    assigned_to: uuid.UUID
+    assigned_to: list[uuid.UUID] = Field(..., min_length=1)
     priority: Priority = "medium"
     deadline: Optional[datetime] = None
     comment: Optional[str] = Field(None, max_length=2000)
@@ -79,7 +65,7 @@ class TaskResponse(BaseModel):
     status: str
     deadline: Optional[datetime]
     blocked_reason: Optional[str]
-    assigned_to: Optional[uuid.UUID]
+    assigned_to: list[uuid.UUID]   # list of member UUIDs
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime
@@ -115,7 +101,7 @@ class ActivityInDetail(BaseModel):
     created_at: datetime
 
 
-class SubtaskInDetail(BaseModel):
+class ChecklistItemInDetail(BaseModel):
     id: uuid.UUID
     title: str
     is_done: bool
@@ -123,11 +109,19 @@ class SubtaskInDetail(BaseModel):
     created_at: datetime
 
 
+class ChecklistInDetail(BaseModel):
+    id: uuid.UUID
+    name: str
+    created_by: uuid.UUID
+    created_at: datetime
+    items: list[ChecklistItemInDetail] = []
+
+
 # ── Full detail response (GET /tasks/{id}) ────────────────────────────────────
 class TaskFullDetail(TaskResponse):
-    assignee_name: Optional[str] = None
+    assignee_names: list[str] = []
     creator_name: Optional[str] = None
-    subtasks: list[SubtaskInDetail] = []
+    checklists: list[ChecklistInDetail] = []
     comments: list[CommentInDetail] = []
     attachments: list[AttachmentInDetail] = []
     timeline: list[ActivityInDetail] = []

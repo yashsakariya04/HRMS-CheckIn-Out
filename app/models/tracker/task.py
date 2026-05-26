@@ -5,9 +5,24 @@ from sqlalchemy import (
     CheckConstraint, ForeignKey, Index, String, Text, TIMESTAMP, text,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
+
+
+class TrackerTaskMember(Base):
+    """Association table — one row per (task, employee) pair."""
+    __tablename__ = "tracker_task_member"
+
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tracker_task.id", ondelete="CASCADE"), primary_key=True
+    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("employee.id", ondelete="CASCADE"), primary_key=True
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
 
 
 class TrackerTask(Base):
@@ -27,7 +42,6 @@ class TrackerTask(Base):
             "'in_development','in_qa','in_stage','in_production','rejected')",
             name="chk_tracker_task_status",
         ),
-        Index("idx_tracker_task_assigned_to", "assigned_to"),
         Index("idx_tracker_task_created_by", "created_by"),
         Index("idx_tracker_task_status", "status"),
         Index("idx_tracker_task_deadline", "deadline"),
@@ -46,9 +60,6 @@ class TrackerTask(Base):
     status: Mapped[str] = mapped_column(String(20), server_default="pending_approval", nullable=False)
     deadline: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     blocked_reason: Mapped[str | None] = mapped_column(String(500))
-    assigned_to: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("employee.id", ondelete="SET NULL")
-    )
     created_by: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("employee.id", ondelete="CASCADE"), nullable=False
     )
@@ -57,4 +68,8 @@ class TrackerTask(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+    members: Mapped[list["TrackerTaskMember"]] = relationship(
+        "TrackerTaskMember", cascade="all, delete-orphan", lazy="selectin"
     )
