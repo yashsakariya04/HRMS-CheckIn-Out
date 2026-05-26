@@ -27,12 +27,8 @@ router = APIRouter(prefix="/employee", tags=["Employee"])
 @router.get("/", response_model=list[EmployeeListItem])
 async def get_all_employees(
     db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
+    user=Depends(get_current_user),
 ):
-    """
-    Admin only: list all employees with email, designation, and department name.
-    Matches the Employees table in the UI. Sorted alphabetically by email.
-    """
     return await list_employees(db)
 
 
