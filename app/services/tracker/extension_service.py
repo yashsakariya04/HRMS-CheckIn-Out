@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.employee import Employee
 from app.models.tracker.extension_request import TrackerExtensionRequest
-from app.models.tracker.task import TrackerTask
+from app.models.tracker.task import TrackerTask, TrackerTaskMember
 from app.schemas.tracker.extension import ExtensionCreate, ExtensionAction
 from app.services.tracker.activity_service import log_activity
 from app.services.tracker.notification_service import notify
@@ -26,12 +26,15 @@ async def request_extension(
         select(TrackerTask).where(
             TrackerTask.id == payload.task_id,
             TrackerTask.organization_id == user.organization_id,
-            TrackerTask.assigned_to == user.id,
         )
     )
     task = result.scalars().first()
     if not task:
-        raise HTTPException(404, "Task not found or not assigned to you")
+        raise HTTPException(404, "Task not found")
+
+    member_ids = {m.employee_id for m in task.members}
+    if user.role == "employee" and user.id not in member_ids and task.created_by != user.id:
+        raise HTTPException(403, "Task not assigned to you")
 
     # Only one pending extension per task at a time
     existing = await db.execute(
