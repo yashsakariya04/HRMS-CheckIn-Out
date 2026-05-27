@@ -18,7 +18,7 @@ from app.models.tracker.task import TrackerTask, TrackerTaskMember
 from app.schemas.tracker.task import (
     TaskCreate, TaskAddMembers, TaskAssign, TaskStatusUpdate, TaskFullDetail,
     CommentInDetail, AttachmentInDetail, ActivityInDetail,
-    ChecklistInDetail, ChecklistItemInDetail,
+    ChecklistInDetail, ChecklistItemInDetail, TaskTimelineResponse,
 )
 from app.services.tracker.activity_service import log_activity
 from app.services.tracker.notification_service import notify
@@ -461,16 +461,6 @@ async def get_task_full_detail(
         for a in att_result.scalars().all()
     ]
 
-    tl_result = await db.execute(
-        select(TrackerActivityLog).where(TrackerActivityLog.task_id == task_id).order_by(TrackerActivityLog.created_at.asc())
-    )
-    timeline = []
-    for log in tl_result.scalars().all():
-        name = await _get_employee_name(db, log.performed_by) if log.performed_by else None
-        timeline.append(ActivityInDetail(id=log.id, action=log.action, detail=log.detail,
-                                         performed_by=log.performed_by, performer_name=name,
-                                         created_at=log.created_at))
-
     return TaskFullDetail(
         id=task.id,
         title=task.title,
@@ -489,7 +479,41 @@ async def get_task_full_detail(
         checklists=checklists,
         comments=comments,
         attachments=attachments,
-        timeline=timeline,
+    )
+
+
+async def get_task_timeline(
+    db: AsyncSession,
+    task_id: uuid.UUID,
+    org_id: uuid.UUID,
+) -> TaskTimelineResponse:
+    await _get_task(db, task_id, org_id)  # 404 guard
+
+    tl_result = await db.execute(
+        select(TrackerActivityLog)
+        .where(TrackerActivityLog.task_id == task_id)
+        .order_by(TrackerActivityLog.created_at.asc())
+    )
+    logs = tl_result.scalars().all()
+
+    # Bulk fetch all performers in one query instead of N+1
+    performer_ids = {log.performed_by for log in logs if log.performed_by}
+    name_map: dict[uuid.UUID, str] = {}
+    if performer_ids:
+        emp_result = await db.execute(select(Employee).where(Employee.id.in_(performer_ids)))
+        for emp in emp_result.scalars().all():
+            name_map[emp.id] = emp.full_name or emp.email
+
+    return TaskTimelineResponse(
+        timeline=[
+            ActivityInDetail(
+                id=log.id, action=log.action, detail=log.detail,
+                performed_by=log.performed_by,
+                performer_name=name_map.get(log.performed_by) if log.performed_by else None,
+                created_at=log.created_at,
+            )
+            for log in logs
+        ]
     )
 
 

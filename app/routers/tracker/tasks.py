@@ -12,7 +12,7 @@ from app.dependencies.database import get_db
 from app.models.employee import Employee
 from app.schemas.tracker.task import (
     TaskCreate, TaskAddMembers, TaskRemoveMembers, TaskAssign, TaskStatusUpdate, TaskDescriptionUpdate,
-    TaskResponse, TaskFullDetail,
+    TaskResponse, TaskFullDetail, TaskTimelineResponse,
 )
 from app.services.tracker import task_service
 
@@ -78,6 +78,16 @@ async def get_task(
     db: AsyncSession = Depends(get_db),
 ):
     return await task_service.get_task_full_detail(db, task_id, user.organization_id)
+
+
+@router.get("/{task_id}/timeline", response_model=TaskTimelineResponse)
+async def get_task_timeline(
+    task_id: uuid.UUID,
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch the activity timeline for a task separately."""
+    return await task_service.get_task_timeline(db, task_id, user.organization_id)
 
 
 @router.post("/{task_id}/assign", response_model=TaskResponse)
