@@ -132,4 +132,8 @@ class TaskFullDetail(TaskResponse):
     checklists: list[ChecklistInDetail] = []
     comments: list[CommentInDetail] = []
     attachments: list[AttachmentInDetail] = []
+
+
+# ── Timeline response (GET /tasks/{id}/timeline) ──────────────────────────────
+class TaskTimelineResponse(BaseModel):
     timeline: list[ActivityInDetail] = []
