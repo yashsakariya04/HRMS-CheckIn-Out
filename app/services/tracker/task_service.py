@@ -183,6 +183,54 @@ async def add_task_members(
     return _task_to_response(task)
 
 
+async def remove_task_members(
+    db: AsyncSession,
+    task_id: uuid.UUID,
+    payload,
+    actor: Employee,
+) -> dict:
+    """Remove members from a task. Actor must be a member, creator, or admin."""
+    task = await _get_task(db, task_id, actor.organization_id)
+
+    member_ids = {m.employee_id for m in task.members}
+    is_admin = actor.role in ("admin", "superadmin")
+    if not is_admin and actor.id not in member_ids and task.created_by != actor.id:
+        raise HTTPException(403, "You are not a member or creator of this task")
+
+    to_remove = set(payload.employee_ids)
+    not_members = to_remove - member_ids
+    if not_members:
+        raise HTTPException(400, "Some employees are not members of this task")
+
+    remaining = member_ids - to_remove
+    if not remaining:
+        raise HTTPException(400, "Cannot remove all members — task must have at least one member")
+
+    result = await db.execute(
+        select(Employee).where(Employee.id.in_(to_remove))
+    )
+    removed_emps = result.scalars().all()
+
+    await db.execute(
+        delete(TrackerTaskMember).where(
+            TrackerTaskMember.task_id == task.id,
+            TrackerTaskMember.employee_id.in_(to_remove),
+        )
+    )
+    await db.flush()
+
+    names = ", ".join(e.full_name or e.email for e in removed_emps)
+    await log_activity(
+        db, task.id, "members_removed",
+        f"{actor.full_name or actor.email} removed members: {names}",
+        actor.id,
+    )
+
+    await db.commit()
+    await db.refresh(task)
+    return _task_to_response(task)
+
+
 async def assign_task(
     db: AsyncSession,
     task_id: uuid.UUID,

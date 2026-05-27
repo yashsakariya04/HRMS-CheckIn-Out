@@ -34,8 +34,12 @@ class TaskCreate(BaseModel):
         return _end_of_day(v) if v is not None else None
 
 
-# ── Add members to an existing task ──────────────────────────────────────────
+# ── Add / remove members on an existing task ─────────────────────────────────
 class TaskAddMembers(BaseModel):
+    employee_ids: list[uuid.UUID] = Field(..., min_length=1)
+
+
+class TaskRemoveMembers(BaseModel):
     employee_ids: list[uuid.UUID] = Field(..., min_length=1)
 
 
