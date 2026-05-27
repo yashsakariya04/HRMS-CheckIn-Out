@@ -11,7 +11,7 @@ from app.dependencies.auth import get_current_user, require_admin
 from app.dependencies.database import get_db
 from app.models.employee import Employee
 from app.schemas.tracker.task import (
-    TaskCreate, TaskAddMembers, TaskAssign, TaskStatusUpdate, TaskDescriptionUpdate,
+    TaskCreate, TaskAddMembers, TaskRemoveMembers, TaskAssign, TaskStatusUpdate, TaskDescriptionUpdate,
     TaskResponse, TaskFullDetail,
 )
 from app.services.tracker import task_service
@@ -42,6 +42,17 @@ async def add_members(
 ):
     """Add new members to an existing task."""
     return await task_service.add_task_members(db, task_id, payload, user)
+
+
+@router.delete("/{task_id}/members", response_model=TaskResponse)
+async def remove_members(
+    task_id: uuid.UUID,
+    payload: TaskRemoveMembers,
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove members from a task. Any member, creator, or admin can do this."""
+    return await task_service.remove_task_members(db, task_id, payload, user)
 
 
 @router.get("", response_model=list[TaskResponse])
