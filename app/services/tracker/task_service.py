@@ -96,6 +96,13 @@ async def create_task(
     is_self_only = set(assignees) == {creator.id}
     status = "todo" if is_self_only else "assigned"
 
+    # Concatenate title and description and generate embedding vector
+    desc = payload.description or ""
+    text_to_embed = f"{payload.title} - {desc}"
+    
+    from app.services.tracker.embedding_service import get_embedding
+    vector = await get_embedding(text_to_embed)
+
     task = TrackerTask(
         organization_id=creator.organization_id,
         title=payload.title,
@@ -105,6 +112,7 @@ async def create_task(
         deadline=payload.deadline,
         created_by=creator.id,
         status=status,
+        task_vector=vector,
     )
     db.add(task)
     await db.flush()
@@ -549,3 +557,46 @@ async def _get_employee_name(db: AsyncSession, emp_id: uuid.UUID | None) -> str 
     result = await db.execute(select(Employee).where(Employee.id == emp_id))
     emp = result.scalars().first()
     return (emp.full_name or emp.email) if emp else None
+
+
+async def check_for_duplicate_task(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    draft_vector: list[float],
+    threshold: float = 0.15,
+) -> list[TrackerTask]:
+    """
+    Finds highly similar tasks within the same organization.
+    Note: pgvector calculates 'distance'. A smaller distance means higher similarity.
+    A threshold of 0.15 roughly corresponds to 85% similarity.
+    """
+    stmt = (
+        select(TrackerTask)
+        .where(TrackerTask.organization_id == org_id)
+        .where(TrackerTask.status.notin_(["rejected", "in_production"]))
+        .where(TrackerTask.task_vector.cosine_distance(draft_vector) < threshold)
+        .order_by(TrackerTask.task_vector.cosine_distance(draft_vector))
+        .limit(3)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def check_duplicates(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    title: str,
+    description: Optional[str] = None,
+    threshold: float = 0.15,
+) -> list[dict]:
+    """
+    Checks for duplicate tasks using the text embedding service.
+    """
+    desc = description or ""
+    text_to_embed = f"{title} - {desc}"
+    
+    from app.services.tracker.embedding_service import get_embedding
+    draft_vector = await get_embedding(text_to_embed)
+    
+    duplicates = await check_for_duplicate_task(db, org_id, draft_vector, threshold)
+    return [_task_to_response(task) for task in duplicates]
