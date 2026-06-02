@@ -56,6 +56,12 @@ class TaskAssign(BaseModel):
         return _end_of_day(v) if v is not None else None
 
 
+class TaskDuplicateCheckRequest(BaseModel):
+    title: str = Field(..., min_length=3, max_length=500)
+    description: Optional[str] = None
+    threshold: float = Field(0.15, ge=0.0, le=1.0)
+
+
 class TaskStatusUpdate(BaseModel):
     status: TaskStatus
 

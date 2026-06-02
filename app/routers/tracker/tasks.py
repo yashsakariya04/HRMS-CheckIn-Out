@@ -12,7 +12,7 @@ from app.dependencies.database import get_db
 from app.models.employee import Employee
 from app.schemas.tracker.task import (
     TaskCreate, TaskAddMembers, TaskRemoveMembers, TaskAssign, TaskStatusUpdate, TaskDescriptionUpdate,
-    TaskResponse, TaskFullDetail, TaskTimelineResponse,
+    TaskResponse, TaskFullDetail, TaskTimelineResponse, TaskDuplicateCheckRequest,
 )
 from app.services.tracker import task_service
 
@@ -31,6 +31,25 @@ async def create_task(
     - assigned_to=[ids] → assign to others (any user can do this), status=assigned
     """
     return await task_service.create_task(db, payload, user)
+
+
+@router.post("/check-duplicate", response_model=list[TaskResponse])
+async def check_duplicate_task(
+    payload: TaskDuplicateCheckRequest,
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Check if a draft task is highly similar to existing active tasks.
+    A threshold of 0.15 roughly corresponds to 85% similarity.
+    """
+    return await task_service.check_duplicates(
+        db,
+        user.organization_id,
+        payload.title,
+        payload.description,
+        payload.threshold,
+    )
 
 
 @router.post("/{task_id}/members", response_model=TaskResponse)

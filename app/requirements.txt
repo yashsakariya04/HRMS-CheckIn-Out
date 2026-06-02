@@ -40,5 +40,5 @@ cryptography
 # AI
 groq==0.13.1
 redis[asyncio]>=5.0.0
-
+pgvector
 # Email (Gmail API via OAuth2 — httpx already listed above under Testing)

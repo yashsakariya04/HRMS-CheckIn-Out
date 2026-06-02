@@ -53,12 +53,14 @@ from app.models.task_entry import TaskEntry
 from app.models.leave_policy import LeavePolicy
 from app.models.employee_leave_balance import EmployeeLeaveBalance
 from app.models.leave_wfh_request import LeaveWFHRequest
+from app.models.leave_notification import LeaveNotification
 from app.models.holiday import Holiday
 from app.models.audit_log import AuditLog
 from app.models.ai_conversation import AIConversation
 from app.models.ai_audit_log import AIAuditLog
 from app.models.password_reset_otp import PasswordResetOTP
 from app.models.tracker.task import TrackerTask
+from app.models.tracker.subtask import TrackerChecklist, TrackerSubtask
 from app.models.tracker.attachment import TrackerAttachment
 from app.models.tracker.comment import TrackerComment
 from app.models.tracker.activity_log import TrackerActivityLog

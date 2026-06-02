@@ -6,6 +6,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from app.models import Base
 
@@ -45,6 +46,13 @@ class TrackerTask(Base):
         Index("idx_tracker_task_created_by", "created_by"),
         Index("idx_tracker_task_status", "status"),
         Index("idx_tracker_task_deadline", "deadline"),
+        Index(
+            "idx_tracker_task_vector",
+            "task_vector",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"task_vector": "vector_cosine_ops"}
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -69,6 +77,7 @@ class TrackerTask(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
+    task_vector: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
 
     members: Mapped[list["TrackerTaskMember"]] = relationship(
         "TrackerTaskMember", cascade="all, delete-orphan", lazy="selectin"
