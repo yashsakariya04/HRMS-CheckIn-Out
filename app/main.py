@@ -71,10 +71,10 @@ async def lifespan(app):
     """
     scheduler = AsyncIOScheduler()
     # Run leave rollover on the 1st of every month at 00:05
-    # scheduler.add_job(run_leave_rollover, "cron", day=1, hour=0, minute=5)
-    # scheduler.add_job(run_deadline_reminders, "cron", hour=8, minute=0)   # 8 AM daily
-    # scheduler.add_job(run_overdue_flagging,   "cron", hour=0, minute=30)  # 12:30 AM daily
-    # scheduler.start()
+    scheduler.add_job(run_leave_rollover, "cron", day=1, hour=0, minute=5)
+    scheduler.add_job(run_deadline_reminders, "cron", hour=8, minute=0)   # 8 AM daily
+    scheduler.add_job(run_overdue_flagging,   "cron", hour=0, minute=30)  # 12:30 AM daily
+    scheduler.start()
     yield  # Application runs here
     scheduler.shutdown()
 
