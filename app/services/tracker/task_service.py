@@ -99,9 +99,27 @@ async def create_task(
     # Concatenate title and description and generate embedding vector
     desc = payload.description or ""
     text_to_embed = f"{payload.title} - {desc}"
-    
+
     from app.services.tracker.embedding_service import get_embedding
     vector = await get_embedding(text_to_embed)
+
+    if not payload.force:
+        duplicates = await check_for_duplicate_task(db, creator.organization_id, vector, payload.threshold)
+        if duplicates:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Similar tasks already exist. Use force=true to create anyway.",
+                    "similar_tasks": [
+                        {
+                            k: str(v) if hasattr(v, "hex") or hasattr(v, "isoformat") else
+                               [str(i) for i in v] if isinstance(v, list) else v
+                            for k, v in _task_to_response(t).items()
+                        }
+                        for t in duplicates
+                    ],
+                },
+            )
 
     task = TrackerTask(
         organization_id=creator.organization_id,
@@ -582,21 +600,3 @@ async def check_for_duplicate_task(
     return list(result.scalars().all())
 
 
-async def check_duplicates(
-    db: AsyncSession,
-    org_id: uuid.UUID,
-    title: str,
-    description: Optional[str] = None,
-    threshold: float = 0.15,
-) -> list[dict]:
-    """
-    Checks for duplicate tasks using the text embedding service.
-    """
-    desc = description or ""
-    text_to_embed = f"{title} - {desc}"
-    
-    from app.services.tracker.embedding_service import get_embedding
-    draft_vector = await get_embedding(text_to_embed)
-    
-    duplicates = await check_for_duplicate_task(db, org_id, draft_vector, threshold)
-    return [_task_to_response(task) for task in duplicates]

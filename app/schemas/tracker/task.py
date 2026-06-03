@@ -24,9 +24,10 @@ class TaskCreate(BaseModel):
     description: Optional[str] = None
     priority: Priority = "medium"
     deadline: Optional[datetime] = None
-    # Empty list = self-assign; one or more UUIDs = assign to others
     assigned_to: list[uuid.UUID] = Field(default_factory=list)
     comment: Optional[str] = Field(None, max_length=2000)
+    force: bool = False
+    threshold: float = Field(0.2, ge=0.0, le=1.0)
 
     @field_validator("deadline", mode="after")
     @classmethod
@@ -54,12 +55,6 @@ class TaskAssign(BaseModel):
     @classmethod
     def normalize_deadline(cls, v: Optional[datetime]) -> Optional[datetime]:
         return _end_of_day(v) if v is not None else None
-
-
-class TaskDuplicateCheckRequest(BaseModel):
-    title: str = Field(..., min_length=3, max_length=500)
-    description: Optional[str] = None
-    threshold: float = Field(0.15, ge=0.0, le=1.0)
 
 
 class TaskStatusUpdate(BaseModel):
