@@ -73,13 +73,13 @@ def _cluster_tasks(tasks: list[TrackerTask]) -> list[list[tuple[TrackerTask, flo
     groups: list[list[tuple[TrackerTask, float]]] = []
 
     for i, task in enumerate(tasks):
-        if i in assigned or not task.embedding:
+        if i in assigned or not task.task_vector:
             continue
         group: list[tuple[TrackerTask, float]] = [(task, 1.0)]
         for j, other in enumerate(tasks):
-            if j <= i or j in assigned or not other.embedding:
+            if j <= i or j in assigned or not other.task_vector:
                 continue
-            score = _cosine(task.embedding, other.embedding)
+            score = _cosine(task.task_vector, other.task_vector)
             if score >= SIMILARITY_THRESHOLD:
                 group.append((other, round(score, 4)))
                 assigned.add(j)
@@ -171,7 +171,7 @@ async def get_my_duplicate_groups(
             TrackerTask.id.in_(task_ids),
             TrackerTask.organization_id == developer.organization_id,
             TrackerTask.status.notin_(["in_production", "rejected"]),
-            TrackerTask.embedding.is_not(None),
+            TrackerTask.task_vector.is_not(None),
         )
     )
     tasks = task_result.scalars().all()

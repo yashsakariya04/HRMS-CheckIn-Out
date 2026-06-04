@@ -24,9 +24,10 @@ class TaskCreate(BaseModel):
     description: Optional[str] = None
     priority: Priority = "medium"
     deadline: Optional[datetime] = None
-    # Empty list = self-assign; one or more UUIDs = assign to others
     assigned_to: list[uuid.UUID] = Field(default_factory=list)
     comment: Optional[str] = Field(None, max_length=2000)
+    force: bool = False
+    threshold: float = Field(0.2, ge=0.0, le=1.0)
 
     @field_validator("deadline", mode="after")
     @classmethod

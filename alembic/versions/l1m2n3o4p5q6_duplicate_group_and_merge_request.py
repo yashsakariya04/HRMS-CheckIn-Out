@@ -27,12 +27,19 @@ def upgrade() -> None:
     # Drop old tracker_similar_task table
     op.drop_table('tracker_similar_task')
 
-    # Add embedding column to tracker_task
-    op.add_column('tracker_task',
-        sa.Column('embedding', sa.Text(), nullable=True)  # stored as vector(384)
-    )
-    # Convert to proper vector type
-    op.execute("ALTER TABLE tracker_task ALTER COLUMN embedding TYPE vector(384) USING NULL")
+    # Add task_vector column to tracker_task (GitLab team uses 768-dim Gemini embeddings)
+    # Column may already exist from GitLab migration — use IF NOT EXISTS via raw SQL
+    op.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tracker_task' AND column_name='task_vector'
+            ) THEN
+                ALTER TABLE tracker_task ADD COLUMN task_vector vector(768);
+            END IF;
+        END$$;
+    """)
 
     # Create tracker_duplicate_group
     op.create_table(
@@ -94,7 +101,7 @@ def downgrade() -> None:
     op.drop_table('tracker_merge_request')
     op.drop_table('tracker_duplicate_group_member')
     op.drop_table('tracker_duplicate_group')
-    op.drop_column('tracker_task', 'embedding')
+    op.execute("ALTER TABLE tracker_task DROP COLUMN IF EXISTS task_vector")
     op.create_table(
         'tracker_similar_task',
         sa.Column('id', postgresql.UUID(as_uuid=True), server_default=sa.text('gen_random_uuid()'), nullable=False),

@@ -40,10 +40,8 @@ cryptography
 # AI
 groq==0.13.1
 redis[asyncio]>=5.0.0
-
-# Embeddings & Similarity
-pgvector>=0.4.2
-sentence-transformers>=5.5.1
+pgvector
 numpy>=2.0.0
+sentence-transformers>=5.5.1
 
 # Email (Gmail API via OAuth2 — httpx already listed above under Testing)

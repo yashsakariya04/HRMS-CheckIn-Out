@@ -22,7 +22,7 @@ from app.schemas.tracker.task import (
 )
 from app.services.tracker.activity_service import log_activity
 from app.services.tracker.notification_service import notify
-from app.services.tracker.embedding_service import embed_task
+from app.services.tracker.embedding_service import get_embedding
 
 _KANBAN_STAGES = {"todo", "in_progress", "in_development", "in_qa", "in_stage", "in_production"}
 
@@ -97,6 +97,31 @@ async def create_task(
     is_self_only = set(assignees) == {creator.id}
     status = "todo" if is_self_only else "assigned"
 
+    # Concatenate title and description and generate embedding vector
+    desc = payload.description or ""
+    text_to_embed = f"{payload.title} - {desc}"
+
+    from app.services.tracker.embedding_service import get_embedding
+    vector = await get_embedding(text_to_embed)
+
+    if not payload.force:
+        duplicates = await check_for_duplicate_task(db, creator.organization_id, vector, payload.threshold)
+        if duplicates:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Similar tasks already exist. Use force=true to create anyway.",
+                    "similar_tasks": [
+                        {
+                            k: str(v) if hasattr(v, "hex") or hasattr(v, "isoformat") else
+                               [str(i) for i in v] if isinstance(v, list) else v
+                            for k, v in _task_to_response(t).items()
+                        }
+                        for t in duplicates
+                    ],
+                },
+            )
+
     task = TrackerTask(
         organization_id=creator.organization_id,
         title=payload.title,
@@ -106,7 +131,7 @@ async def create_task(
         deadline=payload.deadline,
         created_by=creator.id,
         status=status,
-        embedding=embed_task(payload.title, payload.description),
+        task_vector=vector,
     )
     db.add(task)
     await db.flush()
@@ -578,3 +603,28 @@ async def _get_employee_name(db: AsyncSession, emp_id: uuid.UUID | None) -> str 
     result = await db.execute(select(Employee).where(Employee.id == emp_id))
     emp = result.scalars().first()
     return (emp.full_name or emp.email) if emp else None
+
+
+async def check_for_duplicate_task(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    draft_vector: list[float],
+    threshold: float = 0.15,
+) -> list[TrackerTask]:
+    """
+    Finds highly similar tasks within the same organization.
+    Note: pgvector calculates 'distance'. A smaller distance means higher similarity.
+    A threshold of 0.15 roughly corresponds to 85% similarity.
+    """
+    stmt = (
+        select(TrackerTask)
+        .where(TrackerTask.organization_id == org_id)
+        .where(TrackerTask.status.notin_(["rejected", "in_production"]))
+        .where(TrackerTask.task_vector.cosine_distance(draft_vector) < threshold)
+        .order_by(TrackerTask.task_vector.cosine_distance(draft_vector))
+        .limit(3)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
