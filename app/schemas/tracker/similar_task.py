@@ -51,6 +51,8 @@ class MergeRequestResponse(BaseModel):
     review_note: Optional[str]
     created_at: datetime
     reviewed_at: Optional[datetime]
+    tasks: list[TaskSnapshotInGroup] = []
+    tasks: list[TaskSnapshotInGroup] = []  # all tasks in the duplicate group
 
     model_config = {"from_attributes": True}
 
