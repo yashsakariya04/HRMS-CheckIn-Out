@@ -6,9 +6,13 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+EMBEDDING_DIM = 768
+
+
 async def get_embedding(text_content: str) -> list[float]:
     """
-    Get 768-dimensional embedding from Google Gemini API (text-embedding-004).
+    Get 768-dimensional embedding from Google Gemini API (gemini-embedding-2).
+    Falls back to a zero vector in development if GEMINI_API_KEY is not set.
     """
     api_key = getattr(settings, "GEMINI_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -28,7 +32,7 @@ async def get_embedding(text_content: str) -> list[float]:
         },
         "outputDimensionality": 768
     }
-    
+
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(url, json=payload)
@@ -41,3 +45,11 @@ async def get_embedding(text_content: str) -> list[float]:
             status_code=500,
             detail=f"Failed to generate embedding for the task: {str(e)}"
         )
+
+
+# Alias for backward compatibility with any callers using embed_task
+async def embed_task(title: str, description: str | None = None) -> list[float]:
+    text = title.strip()
+    if description:
+        text = f"{text}. {description.strip()}"
+    return await get_embedding(text)

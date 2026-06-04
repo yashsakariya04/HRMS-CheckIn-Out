@@ -38,6 +38,7 @@ This guide walks you through deploying the HRMS backend with PostgreSQL on Supab
 5. Replace `[YOUR-PASSWORD]` in both URLs with your actual database password
 
 Example format:
+
 ```
 # Async (for FastAPI)
 postgresql+asyncpg://postgres.xxxxx:[YOUR-PASSWORD]@aws-0-region.pooler.supabase.com:5432/postgres
@@ -49,12 +50,14 @@ postgresql+psycopg2://postgres.xxxxx:[YOUR-PASSWORD]@aws-0-region.pooler.supabas
 ### Step 3: Test Database Connection Locally
 
 1. Update your local `.env` file with Supabase credentials:
+
 ```bash
 DATABASE_URL=postgresql+asyncpg://postgres.xxxxx:[YOUR-PASSWORD]@aws-0-region.pooler.supabase.com:5432/postgres
 SYNC_DATABASE_URL=postgresql+psycopg2://postgres.xxxxx:[YOUR-PASSWORD]@aws-0-region.pooler.supabase.com:5432/postgres
 ```
 
 2. Test the connection:
+
 ```bash
 python -c "from sqlalchemy import create_engine; engine = create_engine('postgresql+psycopg2://postgres.xxxxx:[YOUR-PASSWORD]@aws-0-region.pooler.supabase.com:5432/postgres'); conn = engine.connect(); print('✓ Connection successful'); conn.close()"
 ```
@@ -89,6 +92,7 @@ alembic upgrade head
 ```
 
 You should see output like:
+
 ```
 INFO  [alembic.runtime.migration] Running upgrade -> c45ec8f8ef8e, initial partner schema
 ```
@@ -117,6 +121,7 @@ python seed.py
 ```
 
 This will populate:
+
 - 1 organization (Infopulse)
 - 4 departments (Engineering, Design, Product, HR)
 - 4 leave policies (casual, sick, earned, comp_off)
@@ -126,6 +131,7 @@ This will populate:
 - 7 national holidays for current year
 
 Expected output:
+
 ```
 Seeding database...
 
@@ -179,42 +185,45 @@ git push -u origin main
 Fill in the following settings:
 
 **Basic Settings:**
+
 - **Name**: `hrms-backend` (or your preferred name)
 - **Region**: Choose same or closest to your Supabase region
 - **Branch**: `main`
 - **Root Directory**: Leave blank
 - **Runtime**: `Python 3`
-- **Build Command**: 
+- **Build Command**:
   ```
   pip install -r app/requirements.txt
   ```
-- **Start Command**: 
+- **Start Command**:
   ```
   uvicorn app.main:app --host 0.0.0.0 --port $PORT
   ```
 
 **Instance Type:**
+
 - Select **Free** tier
 
 ### Step 4: Add Environment Variables
 
 Click **Advanced** → **Add Environment Variable** and add the following:
 
-| Key | Value |
-|-----|-------|
-| `DATABASE_URL` | Your Supabase async connection string (postgresql+asyncpg://...) |
-| `JWT_SECRET_KEY` | Generate with: `openssl rand -hex 32` |
-| `JWT_ALGORITHM` | `HS256` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` |
-| `REFRESH_TOKEN_EXPIRE_DAYS` | `365` |
-| `SECRET_KEY` | Same as JWT_SECRET_KEY or generate another with `openssl rand -hex 32` |
-| `GOOGLE_CLIENT_ID` | Your Google OAuth Client ID |
-| `GOOGLE_CLIENT_SECRET` | Your Google OAuth Client Secret |
-| `GOOGLE_REDIRECT_URI` | `https://YOUR-RENDER-APP.onrender.com/auth/callback` |
-| `APP_ENV` | `production` |
-| `CORS_ORIGINS` | Your frontend URL (e.g., `https://your-frontend.vercel.app`) |
+| Key                             | Value                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------ |
+| `DATABASE_URL`                | Your Supabase async connection string (postgresql+asyncpg://...)         |
+| `JWT_SECRET_KEY`              | Generate with:`openssl rand -hex 32`                                   |
+| `JWT_ALGORITHM`               | `HS256`                                                                |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60`                                                                   |
+| `REFRESH_TOKEN_EXPIRE_DAYS`   | `365`                                                                  |
+| `SECRET_KEY`                  | Same as JWT_SECRET_KEY or generate another with `openssl rand -hex 32` |
+| `GOOGLE_CLIENT_ID`            | Your Google OAuth Client ID                                              |
+| `GOOGLE_CLIENT_SECRET`        | Your Google OAuth Client Secret                                          |
+| `GOOGLE_REDIRECT_URI`         | `https://YOUR-RENDER-APP.onrender.com/auth/callback`                   |
+| `APP_ENV`                     | `production`                                                           |
+| `CORS_ORIGINS`                | Your frontend URL (e.g.,`https://your-frontend.vercel.app`)            |
 
 **Important Notes:**
+
 - Replace `YOUR-RENDER-APP` with your actual Render app name (you'll get this after creation)
 - For `GOOGLE_REDIRECT_URI`, you may need to update this after deployment and add it to Google Cloud Console
 - Keep `JWT_SECRET_KEY` and `SECRET_KEY` secure and never commit them to git
@@ -271,6 +280,7 @@ VITE_API_BASE_URL=https://YOUR-APP-NAME.onrender.com
 ```
 
 Update CORS origins in Render:
+
 1. Go to Render → Your service → **Environment**
 2. Update `CORS_ORIGINS` to include your frontend URL:
    ```
@@ -284,14 +294,15 @@ Update CORS origins in Render:
 ### Test API Endpoints
 
 1. **Health Check** (if you have one):
+
    ```bash
    curl https://YOUR-APP-NAME.onrender.com/
    ```
-
 2. **API Documentation**:
-   - Visit: `https://YOUR-APP-NAME.onrender.com/docs`
 
+   - Visit: `https://YOUR-APP-NAME.onrender.com/docs`
 3. **Test Login**:
+
    - Use the Swagger UI to test the `/api/v1/auth/google/login` endpoint
    - Or test from your frontend application
 
@@ -345,12 +356,14 @@ Supabase automatically backs up your database daily on the free tier. To manuall
 ### Scale Up (When Needed)
 
 **Render:**
+
 - Upgrade to paid tier for:
   - No cold starts (free tier sleeps after 15 min inactivity)
   - More CPU and memory
   - Custom domains
 
 **Supabase:**
+
 - Upgrade to Pro tier for:
   - More database storage
   - Higher connection limits
@@ -363,6 +376,7 @@ Supabase automatically backs up your database daily on the free tier. To manuall
 ### Issue: "Connection refused" or "Database connection failed"
 
 **Solution:**
+
 - Verify `DATABASE_URL` in Render environment variables
 - Check Supabase project is active (not paused)
 - Ensure password is URL-encoded (replace special characters)
@@ -371,6 +385,7 @@ Supabase automatically backs up your database daily on the free tier. To manuall
 ### Issue: "Module not found" errors
 
 **Solution:**
+
 - Verify `app/requirements.txt` includes all dependencies
 - Check build command in Render: `pip install -r app/requirements.txt`
 - Review build logs in Render for specific missing packages
@@ -378,6 +393,7 @@ Supabase automatically backs up your database daily on the free tier. To manuall
 ### Issue: "CORS policy" errors from frontend
 
 **Solution:**
+
 - Add your frontend URL to `CORS_ORIGINS` in Render
 - Format: `https://your-frontend.com,http://localhost:5173`
 - Redeploy after updating
@@ -385,6 +401,7 @@ Supabase automatically backs up your database daily on the free tier. To manuall
 ### Issue: Google OAuth fails
 
 **Solution:**
+
 - Verify `GOOGLE_REDIRECT_URI` matches exactly in:
   - Render environment variables
   - Google Cloud Console authorized redirect URIs
@@ -394,6 +411,7 @@ Supabase automatically backs up your database daily on the free tier. To manuall
 ### Issue: Render app sleeps (free tier)
 
 **Solution:**
+
 - Free tier apps sleep after 15 minutes of inactivity
 - First request after sleep takes 30-60 seconds to wake up
 - Upgrade to paid tier to prevent sleeping
@@ -402,6 +420,7 @@ Supabase automatically backs up your database daily on the free tier. To manuall
 ### Issue: Migrations not applied
 
 **Solution:**
+
 - Run migrations locally first: `alembic upgrade head`
 - Verify tables exist in Supabase Table Editor
 - Don't run migrations from Render (run locally or via CI/CD)
@@ -428,18 +447,18 @@ Supabase automatically backs up your database daily on the free tier. To manuall
 When you add new models or modify existing ones:
 
 1. Create migration locally:
+
    ```bash
    alembic revision --autogenerate -m "description of change"
    ```
-
 2. Review the generated migration in `alembic/versions/`
-
 3. Apply migration to Supabase:
+
    ```bash
    alembic upgrade head
    ```
-
 4. Commit and push:
+
    ```bash
    git add .
    git commit -m "Add migration: description"
@@ -472,11 +491,13 @@ git push origin main
 ## Cost Estimate
 
 **Free Tier (Current Setup):**
+
 - Supabase: Free (500 MB database, 2 GB bandwidth)
 - Render: Free (750 hours/month, sleeps after inactivity)
 - **Total: $0/month**
 
 **Paid Tier (Recommended for Production):**
+
 - Supabase Pro: $25/month (8 GB database, 50 GB bandwidth)
 - Render Starter: $7/month (no sleeping, 512 MB RAM)
 - **Total: $32/month**
