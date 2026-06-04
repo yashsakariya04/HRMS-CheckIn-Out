@@ -12,9 +12,12 @@ from pydantic import BaseModel, Field
 class TaskSnapshotInGroup(BaseModel):
     task_id: uuid.UUID
     title: str
+    description: Optional[str]
+    request_type: str
     status: str
     priority: str
     deadline: Optional[datetime]
+    blocked_reason: Optional[str]
     created_by: uuid.UUID
     creator_name: Optional[str]
     similarity_score: Optional[float]
