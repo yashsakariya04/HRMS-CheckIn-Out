@@ -57,8 +57,8 @@ async def _emp_name(db: AsyncSession, emp_id: uuid.UUID | None) -> str | None:
     return (emp.full_name or emp.email) if emp else None
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
-    va, vb = np.array(a), np.array(b)
+def _cosine(a, b) -> float:
+    va, vb = np.array(a, dtype=float), np.array(b, dtype=float)
     denom = np.linalg.norm(va) * np.linalg.norm(vb)
     return float(np.dot(va, vb) / denom) if denom else 0.0
 
@@ -73,11 +73,11 @@ def _cluster_tasks(tasks: list[TrackerTask]) -> list[list[tuple[TrackerTask, flo
     groups: list[list[tuple[TrackerTask, float]]] = []
 
     for i, task in enumerate(tasks):
-        if i in assigned or not task.task_vector:
+        if i in assigned or task.task_vector is None:
             continue
         group: list[tuple[TrackerTask, float]] = [(task, 1.0)]
         for j, other in enumerate(tasks):
-            if j <= i or j in assigned or not other.task_vector:
+            if j <= i or j in assigned or other.task_vector is None:
                 continue
             score = _cosine(task.task_vector, other.task_vector)
             if score >= SIMILARITY_THRESHOLD:
