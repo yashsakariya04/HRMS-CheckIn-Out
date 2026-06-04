@@ -103,9 +103,12 @@ async def _build_group_response(
         snapshots.append(TaskSnapshotInGroup(
             task_id=task.id,
             title=task.title,
+            description=task.description,
+            request_type=task.request_type,
             status=task.status,
             priority=task.priority,
             deadline=task.deadline,
+            blocked_reason=task.blocked_reason,
             created_by=task.created_by,
             creator_name=await _emp_name(db, task.created_by),
             similarity_score=member.similarity_score,
