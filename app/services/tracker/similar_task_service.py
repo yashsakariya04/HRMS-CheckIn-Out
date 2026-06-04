@@ -1,27 +1,5 @@
 """
 Duplicate task detection and merge-request flow.
-
-Flow:
-  1. Developer opens dashboard → GET /tracker/duplicates/my-groups
-       - Finds all tasks assigned to developer with embeddings
-       - Clusters tasks with cosine similarity >= SIMILARITY_THRESHOLD
-       - Creates/refreshes TrackerDuplicateGroup records
-       - Returns grouped results (does NOT show if group status is kept/merged)
-
-  2. Developer keeps all → POST /tracker/duplicates/{group_id}/keep
-       - Marks group status = "kept", logs activity
-
-  3. Developer requests merge → POST /tracker/duplicates/{group_id}/merge-request
-       - Creates TrackerMergeRequest
-       - Notifies all creators (managers) of tasks in the group
-
-  4. Manager approves → POST /tracker/duplicates/merge-requests/{request_id}/approve
-       - Primary task stays active, all other tasks → status = "rejected"
-       - Logs activity on every task, notifies developer
-
-  5. Manager rejects → POST /tracker/duplicates/merge-requests/{request_id}/reject
-       - Group status = "rejected", developer continues all tasks
-       - Notifies developer
 """
 import uuid
 from datetime import datetime, timezone
@@ -29,7 +7,7 @@ from typing import Optional
 
 import numpy as np
 from fastapi import HTTPException
-from sqlalchemy import select, and_, delete
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.employee import Employee
@@ -44,7 +22,7 @@ from app.schemas.tracker.similar_task import (
 from app.services.tracker.activity_service import log_activity
 from app.services.tracker.notification_service import notify
 
-SIMILARITY_THRESHOLD = 0.82  # cosine similarity — tasks above this are grouped
+SIMILARITY_THRESHOLD = 0.82
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -64,14 +42,8 @@ def _cosine(a, b) -> float:
 
 
 def _cluster_tasks(tasks: list[TrackerTask]) -> list[list[tuple[TrackerTask, float]]]:
-    """
-    Single-pass greedy clustering.
-    Returns list of groups; each group is a list of (task, score_vs_first).
-    Groups with only one task are excluded.
-    """
     assigned = set()
     groups: list[list[tuple[TrackerTask, float]]] = []
-
     for i, task in enumerate(tasks):
         if i in assigned or task.task_vector is None:
             continue
@@ -86,15 +58,15 @@ def _cluster_tasks(tasks: list[TrackerTask]) -> list[list[tuple[TrackerTask, flo
         if len(group) > 1:
             assigned.add(i)
             groups.append(group)
-
     return groups
 
 
-async def _build_group_response(
+async def _get_group_task_snapshots(
     db: AsyncSession,
     group: TrackerDuplicateGroup,
-) -> DuplicateGroupResponse:
-    snapshots: list[TaskSnapshotInGroup] = []
+) -> list[TaskSnapshotInGroup]:
+    """Fetch full task snapshots (title, description, status, etc.) for all members."""
+    snapshots = []
     for member in group.members:
         t_res = await db.execute(select(TrackerTask).where(TrackerTask.id == member.task_id))
         task = t_res.scalars().first()
@@ -114,8 +86,15 @@ async def _build_group_response(
             similarity_score=member.similarity_score,
             role=member.role,
         ))
+    return snapshots
 
-    # Fetch merge request if any
+
+async def _build_group_response(
+    db: AsyncSession,
+    group: TrackerDuplicateGroup,
+) -> DuplicateGroupResponse:
+    snapshots = await _get_group_task_snapshots(db, group)
+
     mr_res = await db.execute(
         select(TrackerMergeRequest).where(TrackerMergeRequest.group_id == group.id)
     )
@@ -135,6 +114,7 @@ async def _build_group_response(
             review_note=mr.review_note,
             created_at=mr.created_at,
             reviewed_at=mr.reviewed_at,
+            tasks=snapshots,
         )
 
     return DuplicateGroupResponse(
@@ -155,17 +135,10 @@ async def get_my_duplicate_groups(
     db: AsyncSession,
     developer: Employee,
 ) -> list[DuplicateGroupResponse]:
-    """
-    Called when developer opens dashboard.
-    Re-runs clustering on all active assigned tasks and upserts groups.
-    Only returns groups with status 'open' or 'merge_requested'.
-    """
-    # Fetch all active tasks assigned to this developer
     member_result = await db.execute(
         select(TrackerTaskMember.task_id).where(TrackerTaskMember.employee_id == developer.id)
     )
     task_ids = list(member_result.scalars().all())
-
     if not task_ids:
         return []
 
@@ -178,18 +151,14 @@ async def get_my_duplicate_groups(
         )
     )
     tasks = task_result.scalars().all()
-
     if len(tasks) < 2:
         return []
 
     clusters = _cluster_tasks(list(tasks))
 
-    # For each cluster, find or create a group
-    # Match by the set of task_ids — if exact same set exists, reuse it
     for cluster in clusters:
         cluster_task_ids = frozenset(t.id for t, _ in cluster)
 
-        # Find an existing open/merge_requested group with the same members
         existing_groups_result = await db.execute(
             select(TrackerDuplicateGroup).where(
                 TrackerDuplicateGroup.developer_id == developer.id,
@@ -201,8 +170,7 @@ async def get_my_duplicate_groups(
 
         matched_group: Optional[TrackerDuplicateGroup] = None
         for eg in existing_groups:
-            existing_member_ids = frozenset(m.task_id for m in eg.members)
-            if existing_member_ids == cluster_task_ids:
+            if frozenset(m.task_id for m in eg.members) == cluster_task_ids:
                 matched_group = eg
                 break
 
@@ -218,7 +186,6 @@ async def get_my_duplicate_groups(
             )
             db.add(group)
             await db.flush()
-
             for task, score in cluster:
                 db.add(TrackerDuplicateGroupMember(
                     group_id=group.id,
@@ -230,7 +197,6 @@ async def get_my_duplicate_groups(
 
     await db.commit()
 
-    # Reload and return all open/merge_requested groups for this developer
     groups_result = await db.execute(
         select(TrackerDuplicateGroup).where(
             TrackerDuplicateGroup.developer_id == developer.id,
@@ -247,7 +213,6 @@ async def keep_group(
     group_id: uuid.UUID,
     developer: Employee,
 ) -> dict:
-    """Developer chooses 'Keep All' — dismisses the duplicate group."""
     result = await db.execute(
         select(TrackerDuplicateGroup).where(
             TrackerDuplicateGroup.id == group_id,
@@ -257,7 +222,7 @@ async def keep_group(
     group = result.scalars().first()
     if not group:
         raise HTTPException(404, "Duplicate group not found")
-    if group.status not in ("open",):
+    if group.status != "open":
         raise HTTPException(400, f"Group is already in status '{group.status}'")
 
     group.status = "kept"
@@ -270,7 +235,6 @@ async def keep_group(
             f"{dev_name} reviewed duplicate group and chose to keep all tasks separately.",
             developer.id,
         )
-
     await db.commit()
     return {"status": "kept", "group_id": str(group_id)}
 
@@ -281,7 +245,6 @@ async def request_merge(
     payload: MergeRequestCreate,
     developer: Employee,
 ) -> MergeRequestResponse:
-    """Developer submits a merge request for a duplicate group."""
     group_result = await db.execute(
         select(TrackerDuplicateGroup).where(
             TrackerDuplicateGroup.id == group_id,
@@ -294,12 +257,10 @@ async def request_merge(
     if group.status != "open":
         raise HTTPException(400, f"Group is already in status '{group.status}'")
 
-    # Validate primary_task_id is in the group
     member_ids = {m.task_id for m in group.members}
     if payload.primary_task_id not in member_ids:
         raise HTTPException(400, "primary_task_id must be one of the tasks in this group")
 
-    # Verify primary task belongs to this org
     pt_result = await db.execute(
         select(TrackerTask).where(
             TrackerTask.id == payload.primary_task_id,
@@ -317,15 +278,11 @@ async def request_merge(
         status="pending",
     )
     db.add(mr)
-
     group.status = "merge_requested"
     group.updated_at = datetime.now(timezone.utc)
-
     await db.flush()
 
     dev_name = developer.full_name or developer.email
-
-    # Collect all unique task creators (managers) to notify
     manager_ids: set[uuid.UUID] = set()
     task_titles: list[str] = []
     for member in group.members:
@@ -352,6 +309,7 @@ async def request_merge(
 
     await db.commit()
     await db.refresh(mr)
+    await db.refresh(group)
 
     return MergeRequestResponse(
         id=mr.id,
@@ -366,6 +324,7 @@ async def request_merge(
         review_note=None,
         created_at=mr.created_at,
         reviewed_at=None,
+        tasks=await _get_group_task_snapshots(db, group),
     )
 
 
@@ -375,7 +334,6 @@ async def review_merge_request(
     payload: MergeRequestReview,
     reviewer: Employee,
 ) -> MergeRequestResponse:
-    """Manager approves or rejects a merge request."""
     mr_result = await db.execute(
         select(TrackerMergeRequest).where(TrackerMergeRequest.id == request_id)
     )
@@ -394,7 +352,6 @@ async def review_merge_request(
 
     reviewer_name = reviewer.full_name or reviewer.email
     now = datetime.now(timezone.utc)
-
     mr.reviewed_by = reviewer.id
     mr.review_note = payload.note
     mr.reviewed_at = now
@@ -404,13 +361,11 @@ async def review_merge_request(
         group.status = "merged"
         group.updated_at = now
 
-        # Mark primary task member role, close all others
         for member in group.members:
             if member.task_id == mr.primary_task_id:
                 member.role = "primary"
             else:
                 member.role = "merged"
-                # Close duplicate tasks
                 t_res = await db.execute(
                     select(TrackerTask).where(TrackerTask.id == member.task_id)
                 )
@@ -425,14 +380,11 @@ async def review_merge_request(
                         reviewer.id,
                     )
 
-        # Log on primary task
         await log_activity(
             db, mr.primary_task_id, "merge_approved",
             f"Merge request approved by {reviewer_name}. Duplicate tasks closed.",
             reviewer.id,
         )
-
-        # Notify developer
         await notify(
             db, mr.requested_by,
             "Merge Request Approved",
@@ -440,7 +392,7 @@ async def review_merge_request(
             mr.primary_task_id,
         )
 
-    else:  # reject
+    else:
         mr.status = "rejected"
         group.status = "rejected"
         group.updated_at = now
@@ -451,7 +403,6 @@ async def review_merge_request(
                 f"Merge request rejected by {reviewer_name}. {payload.note or ''}",
                 reviewer.id,
             )
-
         await notify(
             db, mr.requested_by,
             "Merge Request Rejected",
@@ -462,6 +413,7 @@ async def review_merge_request(
 
     await db.commit()
     await db.refresh(mr)
+    await db.refresh(group)
 
     return MergeRequestResponse(
         id=mr.id,
@@ -476,6 +428,7 @@ async def review_merge_request(
         review_note=mr.review_note,
         created_at=mr.created_at,
         reviewed_at=mr.reviewed_at,
+        tasks=await _get_group_task_snapshots(db, group),
     )
 
 
@@ -483,7 +436,7 @@ async def get_pending_merge_requests(
     db: AsyncSession,
     manager: Employee,
 ) -> list[MergeRequestResponse]:
-    """Manager sees all pending merge requests for their org."""
+    """Manager sees all pending merge requests with full task details."""
     result = await db.execute(
         select(TrackerMergeRequest)
         .join(TrackerDuplicateGroup, TrackerDuplicateGroup.id == TrackerMergeRequest.group_id)
@@ -496,6 +449,10 @@ async def get_pending_merge_requests(
     requests = result.scalars().all()
     responses = []
     for mr in requests:
+        group_res = await db.execute(
+            select(TrackerDuplicateGroup).where(TrackerDuplicateGroup.id == mr.group_id)
+        )
+        group = group_res.scalars().first()
         responses.append(MergeRequestResponse(
             id=mr.id,
             group_id=mr.group_id,
@@ -509,5 +466,6 @@ async def get_pending_merge_requests(
             review_note=mr.review_note,
             created_at=mr.created_at,
             reviewed_at=mr.reviewed_at,
+            tasks=await _get_group_task_snapshots(db, group) if group else [],
         ))
     return responses
