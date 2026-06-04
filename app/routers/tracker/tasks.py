@@ -71,6 +71,16 @@ async def list_tasks(
     return await task_service.get_tasks_for_employee(db, user, status)
 
 
+@router.get("/assigned-by-me", response_model=list[TaskResponse])
+async def list_tasks_assigned_by_me(
+    status: Optional[str] = Query(None),
+    user: Employee = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tasks the current user created and assigned to other people, with live status."""
+    return await task_service.get_tasks_assigned_by_me(db, user, status)
+
+
 @router.get("/{task_id}", response_model=TaskFullDetail)
 async def get_task(
     task_id: uuid.UUID,

@@ -64,3 +64,6 @@ from app.models.tracker.comment import TrackerComment
 from app.models.tracker.activity_log import TrackerActivityLog
 from app.models.tracker.extension_request import TrackerExtensionRequest
 from app.models.tracker.notification import TrackerNotification
+from app.models.tracker.similar_task import (
+    TrackerDuplicateGroup, TrackerDuplicateGroupMember, TrackerMergeRequest
+)

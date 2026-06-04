@@ -22,6 +22,7 @@ from app.schemas.tracker.task import (
 )
 from app.services.tracker.activity_service import log_activity
 from app.services.tracker.notification_service import notify
+from app.services.tracker.embedding_service import embed_task
 
 _KANBAN_STAGES = {"todo", "in_progress", "in_development", "in_qa", "in_stage", "in_production"}
 
@@ -105,6 +106,7 @@ async def create_task(
         deadline=payload.deadline,
         created_by=creator.id,
         status=status,
+        embedding=embed_task(payload.title, payload.description),
     )
     db.add(task)
     await db.flush()
@@ -376,6 +378,33 @@ async def get_tasks_for_employee(
     conditions = [
         TrackerTask.organization_id == user.organization_id,
         or_(TrackerTask.id.in_(member_task_ids), TrackerTask.created_by == user.id),
+    ]
+    if status:
+        conditions.append(TrackerTask.status == status)
+
+    result = await db.execute(
+        select(TrackerTask).where(and_(*conditions)).order_by(TrackerTask.created_at.desc())
+    )
+    return [_task_to_response(t) for t in result.scalars().all()]
+
+
+async def get_tasks_assigned_by_me(
+    db: AsyncSession,
+    user: Employee,
+    status: Optional[str] = None,
+) -> list[dict]:
+    """Tasks created by `user` that are assigned to at least one other person."""
+    # Sub-query: task IDs where there is a member who is NOT the creator
+    other_member_task_ids_result = await db.execute(
+        select(TrackerTaskMember.task_id)
+        .where(TrackerTaskMember.employee_id != user.id)
+    )
+    other_member_task_ids = set(other_member_task_ids_result.scalars().all())
+
+    conditions = [
+        TrackerTask.organization_id == user.organization_id,
+        TrackerTask.created_by == user.id,
+        TrackerTask.id.in_(other_member_task_ids),
     ]
     if status:
         conditions.append(TrackerTask.status == status)
