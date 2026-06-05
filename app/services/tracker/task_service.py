@@ -394,7 +394,6 @@ async def get_tasks_for_employee(
     user: Employee,
     status: Optional[str] = None,
 ) -> list[dict]:
-    # Tasks where user is a member OR creator
     member_task_ids_result = await db.execute(
         select(TrackerTaskMember.task_id).where(TrackerTaskMember.employee_id == user.id)
     )
@@ -406,6 +405,9 @@ async def get_tasks_for_employee(
     ]
     if status:
         conditions.append(TrackerTask.status == status)
+    else:
+        # Exclude rejected tasks from the board by default (includes merged duplicates)
+        conditions.append(TrackerTask.status != "rejected")
 
     result = await db.execute(
         select(TrackerTask).where(and_(*conditions)).order_by(TrackerTask.created_at.desc())
@@ -433,6 +435,8 @@ async def get_tasks_assigned_by_me(
     ]
     if status:
         conditions.append(TrackerTask.status == status)
+    else:
+        conditions.append(TrackerTask.status != "rejected")
 
     result = await db.execute(
         select(TrackerTask).where(and_(*conditions)).order_by(TrackerTask.created_at.desc())
@@ -451,6 +455,9 @@ async def get_tasks_for_admin(
     conditions = [TrackerTask.organization_id == org_id]
     if status:
         conditions.append(TrackerTask.status == status)
+    else:
+        # Exclude rejected tasks (includes merged duplicates) from the board by default
+        conditions.append(TrackerTask.status != "rejected")
     if priority:
         conditions.append(TrackerTask.priority == priority)
     if assigned_to:
