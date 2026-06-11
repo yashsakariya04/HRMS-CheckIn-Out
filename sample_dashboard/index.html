@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Check-in / Check-out Dashboard (Sample)</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Check-in / Check-out Dashboard (Sample)</h1>
+    <div class="controls">
+      <div id="status">Status: <strong id="current-status">Not checked in</strong></div>
+      <div class="buttons">
+        <button id="checkin-btn">Check In</button>
+        <button id="checkout-btn" disabled>Check Out</button>
+        <button id="clear-btn">Clear</button>
+      </div>
+    </div>
+
+    <h2>Sessions</h2>
+    <table id="sessions-table">
+      <thead>
+        <tr><th>#</th><th>Check In</th><th>Check Out</th><th>Duration</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p class="hint">This is a standalone sample. It stores sessions in your browser only.</p>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
