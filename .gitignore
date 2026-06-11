@@ -10,4 +10,5 @@ keys/
 .vscode/
 .DS_Store
 client_secret.json
+gmail_token.py
 get_gmail_refresh_token.py

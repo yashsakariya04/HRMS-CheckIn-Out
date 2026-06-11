@@ -20,7 +20,11 @@ def _is_weekend(d: date) -> bool:
     return d.weekday() >= 5
 
 
-async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
+async def compute_realtime_balance(
+    db: AsyncSession,
+    employee_id,
+    bulk_data: dict | None = None,
+) -> dict:
     """
     Returns real-time casual and comp_off balance for an employee.
 
@@ -34,21 +38,29 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
 
     This means the balance is always real-time accurate, same for
     both admin and employee views.
+
+    Parameters:
+      bulk_data — Optional pre-fetched data dict with keys:
+                  'balances', 'employees', 'leave_requests', 'holidays'
+                  Used by get_leave_summary to avoid N+1 queries.
     """
     today = date.today()
     cur_year, cur_month = today.year, today.month
 
     # ── 1. Latest ledger row per leave type ───────────────────────────
-    result = await db.execute(
-        select(EmployeeLeaveBalance)
-        .where(EmployeeLeaveBalance.employee_id == employee_id)
-        .order_by(
-            EmployeeLeaveBalance.leave_type,
-            EmployeeLeaveBalance.year.desc(),
-            EmployeeLeaveBalance.month.desc(),
+    if bulk_data and 'balances' in bulk_data:
+        rows = bulk_data['balances'].get(employee_id, [])
+    else:
+        result = await db.execute(
+            select(EmployeeLeaveBalance)
+            .where(EmployeeLeaveBalance.employee_id == employee_id)
+            .order_by(
+                EmployeeLeaveBalance.leave_type,
+                EmployeeLeaveBalance.year.desc(),
+                EmployeeLeaveBalance.month.desc(),
+            )
         )
-    )
-    rows = result.scalars().all()
+        rows = result.scalars().all()
 
     seen: set = set()
     latest: dict[str, EmployeeLeaveBalance] = {}
@@ -61,27 +73,28 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
     comp_row = latest.get("comp_off")
 
     # ── Fetch employee's joined_on for probation check ─────────────────
-    emp_result = await db.execute(
-        select(Employee.joined_on).where(Employee.id == employee_id)
-    )
-    joined_on = emp_result.scalar_one_or_none()
+    if bulk_data and 'employees' in bulk_data:
+        joined_on = bulk_data['employees'].get(employee_id)
+    else:
+        emp_result = await db.execute(
+            select(Employee.joined_on).where(Employee.id == employee_id)
+        )
+        joined_on = emp_result.scalar_one_or_none()
+    
     in_probation = _is_in_probation(joined_on, cur_year, cur_month)
     simulated_accrual = 0.0 if in_probation else 1.0
 
     # ── 2. Base closing from ledger (or simulate if no row yet) ───────
     if casual_row and casual_row.year == cur_year and casual_row.month == cur_month:
-        # Rollover already ran for this month — ledger is the base
         casual_base = float(casual_row.closing_balance or 0)
         casual_already_used = float(casual_row.used)
     elif casual_row:
-        # Rollover hasn't run yet for this month — simulate opening + accrual
         casual_base = float(casual_row.closing_balance or 0) + simulated_accrual
         casual_already_used = 0.0
     else:
-        casual_base = simulated_accrual  # brand new employee
+        casual_base = simulated_accrual
         casual_already_used = 0.0
 
-    # comp_off base from ledger (same whether rollover ran this month or not)
     if comp_row and comp_row.year == cur_year and comp_row.month == cur_month:
         comp_base = float(comp_row.closing_balance or 0)
         comp_already_used = float(comp_row.used)
@@ -96,28 +109,34 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
     first_day = date(cur_year, cur_month, 1)
     last_day = date(cur_year, cur_month, monthrange(cur_year, cur_month)[1])
 
-    leave_result = await db.execute(
-        select(LeaveWFHRequest).where(
-            LeaveWFHRequest.employee_id == employee_id,
-            LeaveWFHRequest.request_type == "leave",
-            LeaveWFHRequest.status == "approved",
-            LeaveWFHRequest.from_date <= last_day,
-            LeaveWFHRequest.to_date >= first_day,
+    if bulk_data and 'leave_requests' in bulk_data:
+        leave_requests = bulk_data['leave_requests'].get(employee_id, [])
+    else:
+        leave_result = await db.execute(
+            select(LeaveWFHRequest).where(
+                LeaveWFHRequest.employee_id == employee_id,
+                LeaveWFHRequest.request_type == "leave",
+                LeaveWFHRequest.status == "approved",
+                LeaveWFHRequest.from_date <= last_day,
+                LeaveWFHRequest.to_date >= first_day,
+            )
         )
-    )
-    leave_requests = leave_result.scalars().all()
+        leave_requests = leave_result.scalars().all()
 
     current_month_used = 0.0
     if leave_requests:
-        org_id = leave_requests[0].organization_id
-        holiday_result = await db.execute(
-            select(Holiday.holiday_date).where(
-                Holiday.organization_id == org_id,
-                Holiday.holiday_date >= first_day,
-                Holiday.holiday_date <= last_day,
+        if bulk_data and 'holidays' in bulk_data:
+            holiday_dates = bulk_data['holidays']
+        else:
+            org_id = leave_requests[0].organization_id
+            holiday_result = await db.execute(
+                select(Holiday.holiday_date).where(
+                    Holiday.organization_id == org_id,
+                    Holiday.holiday_date >= first_day,
+                    Holiday.holiday_date <= last_day,
+                )
             )
-        )
-        holiday_dates = set(holiday_result.scalars().all())
+            holiday_dates = set(holiday_result.scalars().all())
 
         for req in leave_requests:
             current = max(req.from_date, first_day)
@@ -128,8 +147,6 @@ async def compute_realtime_balance(db: AsyncSession, employee_id) -> dict:
                 current += timedelta(days=1)
 
     # ── 4. Split current month used days: comp_off first, then casual ──
-    # Mirror the same priority logic as _get_approved_leave_days in rollover.
-    # comp_off available = comp_base (already includes earned comp_offs this month)
     comp_off_available = max(0.0, comp_base)
     comp_off_unapplied = min(current_month_used, comp_off_available) - comp_already_used
     casual_unapplied = (current_month_used - min(current_month_used, comp_off_available)) - casual_already_used

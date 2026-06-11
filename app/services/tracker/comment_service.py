@@ -33,7 +33,8 @@ async def add_comment(
         raise HTTPException(404, "Task not found")
 
     # Employees can only comment on tasks they are assigned to or created
-    if user.role == "employee" and task.assigned_to != user.id and task.created_by != user.id:
+    member_ids = {m.employee_id for m in task.members}
+    if user.role == "employee" and user.id not in member_ids and task.created_by != user.id:
         raise HTTPException(403, "You can only comment on tasks assigned to or created by you")
 
     comment = TrackerComment(
@@ -51,9 +52,10 @@ async def add_comment(
     )
 
     # Notify the other party
-    if user.role in ("admin", "superadmin") and task.assigned_to:
-        await notify(db, task.assigned_to, "New Comment",
-                     f"Admin commented on your task: {task.title}", task_id)
+    if user.role in ("admin", "superadmin") and task.members:
+        for m in task.members:
+            await notify(db, m.employee_id, "New Comment",
+                         f"Admin commented on your task: {task.title}", task_id)
     elif user.role == "employee":
         admins_result = await db.execute(
             select(Employee).where(
