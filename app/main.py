@@ -47,14 +47,13 @@ from app.routers import (
 )
 from app.routers import add_holiday_api, add_project_api, add_user_api
 from app.routers import superadmin as superadmin_router
-from app.ai import router as ai_router
 from app.routers.tracker import tasks as tracker_tasks
 from app.routers.tracker import comments as tracker_comments
 from app.routers.tracker import extensions as tracker_extensions
 from app.routers.tracker import files as tracker_files
 from app.routers.tracker import notifications as tracker_notifications
-from app.routers.tracker import analytics as tracker_analytics
 from app.routers.tracker import subtasks as tracker_subtasks
+from app.routers.tracker import similar_tasks as tracker_similar_tasks
 from app.routers import leave_notifications as leave_notifications_router
 
 
@@ -114,11 +113,11 @@ app.include_router(superadmin_router.router, prefix="/api/v1")  # Superadmin: ro
 app.include_router(ai_router.router,          prefix="/api/v1")  # This is not used by the backend it is just for testing purpose 
 app.include_router(tracker_tasks.router,        prefix="/api/v1")  # Tracker: tasks
 app.include_router(tracker_comments.router,     prefix="/api/v1")  # Tracker: comments
-app.include_router(tracker_extensions.router,   prefix="/api/v1")  # Tracker: extensions
 app.include_router(tracker_files.router,        prefix="/api/v1")  # Tracker: file uploads
+app.include_router(tracker_extensions.router,   prefix="/api/v1")  # Tracker: extensions
 app.include_router(tracker_notifications.router,prefix="/api/v1")  # Tracker: notifications
-app.include_router(tracker_analytics.router,    prefix="/api/v1")  # Tracker: analytics
 app.include_router(tracker_subtasks.router,     prefix="/api/v1")  # Tracker: subtasks
+app.include_router(tracker_similar_tasks.router, prefix="/api/v1")  # Tracker: similar tasks panel
 app.include_router(leave_notifications_router.router, prefix="/api/v1")  # Leave notifications
 
 

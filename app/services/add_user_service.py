@@ -17,7 +17,7 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from app.models.employee import Department, Employee
 from app.models.employee_leave_balance import EmployeeLeaveBalance
@@ -29,7 +29,7 @@ async def list_employees(db) -> list:
     result = await db.execute(
         select(Employee, Department.name)
         .outerjoin(Department, Department.id == Employee.department_id)
-        .where(Employee.role == "employee", Employee.is_active == True)
+        .where(or_(Employee.role == "employee", Employee.role == "admin"), Employee.is_active.is_(True))
         .order_by(Employee.email)
     )
     rows = result.all()
