@@ -27,7 +27,7 @@ class TrackerExtensionRequest(Base):
     requested_by: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("employee.id", ondelete="CASCADE"), nullable=False
     )
-    requested_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    new_deadline: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     reason: Mapped[str] = mapped_column(String(500), nullable=False)
     comment: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(10), server_default="pending", nullable=False)
