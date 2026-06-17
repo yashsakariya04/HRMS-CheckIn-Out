@@ -288,7 +288,8 @@ async def assign_task(
     await db.flush()
 
     task.priority = payload.priority
-    task.deadline = payload.deadline
+    if payload.deadline is not None:
+        task.deadline = payload.deadline
     task.status = "assigned"
     task.updated_at = datetime.now(timezone.utc)
 

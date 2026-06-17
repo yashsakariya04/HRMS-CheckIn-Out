@@ -23,7 +23,7 @@ class TaskCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=500)
     description: Optional[str] = None
     priority: Priority = "medium"
-    deadline: Optional[datetime] = None
+    deadline: datetime
     assigned_to: list[uuid.UUID] = Field(default_factory=list)
     comment: Optional[str] = Field(None, max_length=2000)
     force: bool = False
@@ -31,8 +31,9 @@ class TaskCreate(BaseModel):
 
     @field_validator("deadline", mode="after")
     @classmethod
-    def normalize_deadline(cls, v: Optional[datetime]) -> Optional[datetime]:
-        return _end_of_day(v) if v is not None else None
+    def normalize_deadline(cls, v: datetime) -> datetime:
+        return _end_of_day(v)
+
 
 
 # ── Add / remove members on an existing task ─────────────────────────────────

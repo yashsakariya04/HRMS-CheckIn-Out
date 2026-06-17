@@ -46,10 +46,13 @@ async def request_extension(
     if existing.scalars().first():
         raise HTTPException(400, "A pending extension request already exists for this task")
 
+    if task.deadline and payload.new_deadline <= task.deadline:
+        raise HTTPException(400, "Proposed deadline must be later than the current deadline")
+
     ext = TrackerExtensionRequest(
         task_id=payload.task_id,
         requested_by=user.id,
-        requested_days=payload.requested_days,
+        new_deadline=payload.new_deadline,
         reason=payload.reason,
         comment=payload.comment,
     )
@@ -58,7 +61,7 @@ async def request_extension(
 
     await log_activity(
         db, payload.task_id, "extension_requested",
-        f"Deadline extension requested for {payload.requested_days} day(s): {payload.reason}",
+        f"Deadline extension requested to {payload.new_deadline.strftime('%Y-%m-%d')}: {payload.reason}",
         user.id,
     )
 
@@ -67,7 +70,7 @@ async def request_extension(
         await notify(
             db, admin.id,
             "Deadline Extension Requested",
-            f"{user.full_name or user.email} requested {payload.requested_days} extra day(s) on '{task.title}'",
+            f"{user.full_name or user.email} requested deadline extension to {payload.new_deadline.strftime('%Y-%m-%d')} on '{task.title}'",
             payload.task_id,
         )
 
@@ -110,8 +113,8 @@ async def review_extension(
     ext.admin_note = payload.admin_note
     ext.reviewed_at = datetime.now(timezone.utc)
 
-    if payload.action == "approve" and task.deadline:
-        task.deadline = task.deadline + timedelta(days=ext.requested_days)
+    if payload.action == "approve":
+        task.deadline = ext.new_deadline
         task.updated_at = datetime.now(timezone.utc)
 
     action_label = "extension_approved" if payload.action == "approve" else "extension_rejected"
