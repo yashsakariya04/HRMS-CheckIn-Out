@@ -152,6 +152,24 @@ def seed():
                 db.add(Holiday(organization_id=org.id, name=h["name"], holiday_date=h["date"], holiday_type="national"))
                 print(f"  [+] Holiday      : {h['name']}")
 
+        # 8. Announcements
+        admin_emp = db.query(Employee).filter_by(role="admin", organization_id=org.id).first()
+        if admin_emp:
+            from app.models.announcement import Announcement
+            for ann in [
+                {"title": "Welcome to Infopulse!", "content": "We are excited to launch our new HRMS portal. Please make sure to check in/out daily and log your tasks."},
+                {"title": "Annual Team Building Offsite", "content": "Mark your calendars! The annual team building offsite is scheduled for next month. Details will follow soon."}
+            ]:
+                exists = db.query(Announcement).filter_by(organization_id=org.id, title=ann["title"]).first()
+                if not exists:
+                    db.add(Announcement(
+                        organization_id=org.id,
+                        title=ann["title"],
+                        content=ann["content"],
+                        created_by=admin_emp.id
+                    ))
+                    print(f"  [+] Announcement : {ann['title']}")
+
         db.commit()
         print("\n" + "─" * 55)
         print("Seeding complete!")

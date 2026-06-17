@@ -45,7 +45,7 @@ from app.routers import (
     requests_Emp as requests_router,
     tasks as tasks_router,
 )
-from app.routers import add_holiday_api, add_project_api, add_user_api
+from app.routers import add_holiday_api, add_project_api, add_user_api, announcement_api
 from app.routers import superadmin as superadmin_router
 from app.routers.tracker import tasks as tracker_tasks
 from app.routers.tracker import comments as tracker_comments
@@ -110,6 +110,7 @@ app.include_router(add_user_api.router,      prefix="/api/v1")  # Admin: add/rem
 app.include_router(add_project_api.router,   prefix="/api/v1")  # Admin: manage projects
 app.include_router(add_holiday_api.router,   prefix="/api/v1")  # Admin: manage holidays
 app.include_router(superadmin_router.router, prefix="/api/v1")  # Superadmin: role management
+app.include_router(announcement_api.router,   prefix="/api/v1")  # Announcement endpoints
 app.include_router(ai_router.router,          prefix="/api/v1")  # This is not used by the backend it is just for testing purpose 
 app.include_router(tracker_tasks.router,        prefix="/api/v1")  # Tracker: tasks
 app.include_router(tracker_comments.router,     prefix="/api/v1")  # Tracker: comments
