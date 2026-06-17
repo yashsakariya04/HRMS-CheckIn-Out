@@ -110,6 +110,7 @@ app.include_router(add_user_api.router,      prefix="/api/v1")  # Admin: add/rem
 app.include_router(add_project_api.router,   prefix="/api/v1")  # Admin: manage projects
 app.include_router(add_holiday_api.router,   prefix="/api/v1")  # Admin: manage holidays
 app.include_router(superadmin_router.router, prefix="/api/v1")  # Superadmin: role management
+app.include_router(ai_router.router,          prefix="/api/v1")  # This is not used by the backend it is just for testing purpose 
 app.include_router(tracker_tasks.router,        prefix="/api/v1")  # Tracker: tasks
 app.include_router(tracker_comments.router,     prefix="/api/v1")  # Tracker: comments
 app.include_router(tracker_files.router,        prefix="/api/v1")  # Tracker: file uploads
